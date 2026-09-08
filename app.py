@@ -11,16 +11,15 @@ class GayrimenkulOtomasyonu:
         self.parsel = parsel
         self.tapu_alani = float(tapu_alani)
         self.nitelik = nitelik
-        self.terk_yapildi_mi = terk_yapildi_mi  # True: Terk Yapılmış (Arsa), False: Terk Yapılmamış (Bahçe)
+        self.terk_yapildi_mi = terk_yapildi_mi  # False: Terk Yapılmamış
         self.kaks = float(kaks)
         self.taks = float(taks)
-        self.sunum_tipi = sunum_tipi  # "Kat Karşılığı" veya "Satılık"
+        self.sunum_tipi = sunum_tipi
         
         self.hesapla()
 
     def hesapla(self):
-        # Terk durumuna göre kesinti ve alan hesaplama
-        if self.terk_yapildi_mi or self.nitelik.lower() == 'arsa':
+        if self.terk_yapildi_mi:
             self.terk_durumu_str = "18. Madde Uygulanmış (Terk Yapılmış)"
             self.kesinti_orani = 0.00
             self.net_alan = self.tapu_alani
@@ -42,10 +41,10 @@ class GayrimenkulOtomasyonu:
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
-            fontSize=16,
+            fontSize=14,
             textColor=colors.HexColor('#1A2B4C'),
             alignment=1,
-            spaceAfter=10
+            spaceAfter=5
         )
         
         subtitle_style = ParagraphStyle(
@@ -57,15 +56,15 @@ class GayrimenkulOtomasyonu:
             spaceAfter=15
         )
 
-        # Kurumsal Başlık
-        story.append(Paragraph("<b>1st ESTATE - MERİÇ GAYRİMENKUL DANIŞMANLIK</b>", title_style))
+        # Çift Marka Başlığı
+        story.append(Paragraph("<b>İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK & MERİÇ İNŞAAT EMLAK</b>", title_style))
         story.append(Paragraph(f"<b>İMAR EMSAL & ANALİZ RAPORU ({self.sunum_tipi.upper()})</b>", subtitle_style))
         story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1A2B4C'), spaceAfter=15))
 
         # Taşınmaz Bilgileri Tablosu
         data_tasinmaz = [
             ["Mahalle / İlçe", f"{self.mahalle} / Beykoz", "Nitelik", self.nitelik],
-            ["Ada / Parsel", f"{self.ada} / {self.parsel}", "18. Madde / Terk Durumu", self.terk_durumu_str],
+            ["Ada / Parsel", f"{self.ada} / {self.parsel}", "18. Madde / Terk", self.terk_durumu_str],
             ["Tapu Alanı", f"{self.tapu_alani:,.2f} m²", "Sunum Modeli", self.sunum_tipi]
         ]
         
@@ -81,7 +80,7 @@ class GayrimenkulOtomasyonu:
         story.append(t1)
         story.append(Spacer(1, 15))
 
-        # İmar ve Hesaplama Sonuçları Tablosu
+        # Hesaplama Tablosu
         data_hesap = [
             ["Girdi / Hesap Kalemi", "Değer / Ölçü"],
             ["Hesaba Esas Net Alan", f"{self.net_alan:,.2f} m² (%{int((1-self.kesinti_orani)*100)} esas)"],
@@ -106,7 +105,7 @@ class GayrimenkulOtomasyonu:
         story.append(t2)
         story.append(Spacer(1, 15))
 
-        # Sunum Tipine Göre Süreç Akışı
+        # Süreç Akışı
         if self.sunum_tipi == "Kat Karşılığı":
             surec = "Süreç Akışı: Arsa Analizi ➔ Projelendirme ➔ Sözleşme ➔ Ruhsat ➔ İnşaat ➔ Teslim"
         else:
@@ -115,19 +114,14 @@ class GayrimenkulOtomasyonu:
         story.append(Paragraph(f"<b>{surec}</b>", styles['Normal']))
         story.append(Spacer(1, 15))
 
-        # İletişim Bilgileri (Kurumsal Altbilgi)
-        iletisim_text = "<b>Gayrimenkul Danışmanı:</b> Umutcan K. MERİÇ (0539 451 61 61) | Süleyman MERİÇ (0532 695 10 83)<br/>" \
+        # Ortak Kurumsal Altbilgi
+        iletisim_text = "<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak Ortak Çalışma Alanı</b><br/>" \
+                        "Umutcan K. MERİÇ (0539 451 61 61) | Süleyman MERİÇ (0532 695 10 83)<br/>" \
                         "<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
         story.append(Paragraph(iletisim_text, styles['Normal']))
 
         doc.build(story)
-        print(f"Rapor oluşturuldu: {dosya_adi}")
 
-# Örnek Kullanım:
-# Terk Yapılmamış Bahçe Niteliğinde Parsel (Müteahhit Sunumu)
-p1 = GayrimenkulOtomasyonu("Yavuzselim", "1647", "10", 6398.86, "Bahçe", terk_yapildi_mi=False, kaks=0.40, taks=0.30, sunum_tipi="Kat Karşılığı")
-p1.pdf_rapor_olustur("Yavuzselim_1647_10_Rapor.pdf")
-
-# Terk Yapılmış Arsa Niteliğinde Parsel (Satılık Müşteri Sunumu)
-p2 = GayrimenkulOtomasyonu("Fatih", "40", "70", 1372.10, "Arsa", terk_yapildi_mi=True, kaks=0.40, taks=0.30, sunum_tipi="Satılık")
-p2.pdf_rapor_olustur("Fatih_40_70_Rapor.pdf")
+# Fatih 40 Ada 70 Parsel (Terk Yapılmamış Durum)
+fatih_40_70 = GayrimenkulOtomasyonu("Fatih", "40", "70", 1372.10, "Arsa/Bahçe", terk_yapildi_mi=False, kaks=0.40, taks=0.30, sunum_tipi="Satılık")
+fatih_40_70.pdf_rapor_olustur("Fatih_40_70_Terk_Yapilmamis.pdf")
