@@ -42,15 +42,45 @@ BOLGE_MAHALLE_HARITASI = {
     ]
 }
 
+def normalize_tr_text(text):
+    """
+    Türkçe karakter ve boşluk uyuşmazlıklarını sıfırlamak için
+    metinleri standart ASCII büyük harfe dönüştürür.
+    Örn: 'Çiftlik' -> 'CIFTLIK', 'Yavuz Selim' -> 'YAVUZ SELIM'
+    """
+    if not text:
+        return ""
+    text = str(text).strip()
+    
+    # Mahalle / Mh eklerini temizle
+    pattern = r'(?i)\b(ÇAVUŞBAŞI\s+)?(mh\.?|mah\.?|mahallesi)\b'
+    text = re.sub(pattern, '', text).strip()
+    
+    # Türkçe Karakter Dönüşümü
+    tr_map = {
+        'ç': 'C', 'Ç': 'C',
+        'ğ': 'G', 'Ğ': 'G',
+        'ı': 'I', 'I': 'I', 'i': 'I', 'İ': 'I',
+        'ö': 'O', 'Ö': 'O', 'ö': 'O',
+        'ş': 'S', 'Ş': 'S',
+        'ü': 'U', 'Ü': 'U'
+    }
+    res = "".join(tr_map.get(ch, ch.upper()) for ch in text)
+    
+    # YAVUZSELIM -> YAVUZ SELIM standartlaştırması
+    res = res.replace("YAVUZSELIM", "YAVUZ SELIM")
+    # Çoklu boşlukları tek boşluğa indir
+    res = re.sub(r'\s+', ' ', res).strip()
+    return res
+
 def clean_mahalle_name(name):
-    """Metin içindeki Mh., Mah., Mahallesi gibi ekleri ve gereksiz boşlukları temizler."""
+    """Arayüzde gösterim için düzgün isim formatı."""
     if not name:
         return ""
     name = str(name).strip()
     pattern = r'(?i)\b(ÇAVUŞBAŞI\s+)?(mh\.?|mah\.?|mahallesi)\b'
     cleaned = re.sub(pattern, '', name).strip()
-    # YAVUZSELİM / YAVUZ SELİM gibi standartlaştırma düzenlemesi
-    cleaned = cleaned.replace("YAVUZSELİM", "YAVUZ SELİM").replace("Yavuzselim", "Yavuz Selim")
+    cleaned = cleaned.replace("YAVUZSELİM", "Yavuz Selim").replace("Yavuzselim", "Yavuz Selim")
     return cleaned if cleaned else name.strip()
 
 def init_db():
@@ -60,12 +90,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS imar_kayitlari (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mahalle TEXT,
+            norm_mahalle TEXT,
             ada TEXT,
             parsel TEXT,
             tapu_alani REAL,
             kaks REAL,
             taks REAL,
-            UNIQUE(mahalle, ada, parsel)
+            UNIQUE(norm_mahalle, ada, parsel)
         )
     """)
     conn.commit()
@@ -76,15 +107,21 @@ init_db()
 def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
     conn = sqlite3.connect("imar_hafizasi.db")
     cursor = conn.cursor()
-    sade_mahalle = clean_mahalle_name(mahalle).upper()
+    
+    norm_m = normalize_tr_text(mahalle)
+    gosterim_m = clean_mahalle_name(mahalle)
+    ada_str = str(ada).strip()
+    parsel_str = str(parsel).strip()
+
     cursor.execute("""
-        INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, kaks, taks)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(mahalle, ada, parsel) DO UPDATE SET
+        INSERT INTO imar_kayitlari (mahalle, norm_mahalle, ada, parsel, tapu_alani, kaks, taks)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(norm_mahalle, ada, parsel) DO UPDATE SET
+            mahalle=excluded.mahalle,
             tapu_alani=excluded.tapu_alani,
             kaks=excluded.kaks,
             taks=excluded.taks
-    """, (sade_mahalle, str(ada).strip(), str(parsel).strip(), float(tapu_alani), float(kaks), float(taks)))
+    """, (gosterim_m, norm_m, ada_str, parsel_str, float(tapu_alani), float(kaks), float(taks)))
     conn.commit()
     conn.close()
 
@@ -99,17 +136,17 @@ def db_kayit_sorgula(mahalle, ada, parsel):
     conn = sqlite3.connect("imar_hafizasi.db")
     cursor = conn.cursor()
     
-    sade_mahalle = clean_mahalle_name(mahalle).upper()
+    target_norm = normalize_tr_text(mahalle)
     ada_str = str(ada).strip()
     parsel_str = str(parsel).strip()
 
-    # SADECE Mahalle, Ada ve Parsel BİREBİR EŞLEŞİRSE Veriyi Getir
+    # Tam Normalize Edilmiş Mahalle + Ada + Parsel Sorgusu
     cursor.execute("""
         SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
-        WHERE UPPER(mahalle) = ?
+        WHERE (norm_mahalle = ? OR UPPER(mahalle) = UPPER(?))
           AND CAST(ada AS TEXT) = ? 
           AND CAST(parsel AS TEXT) = ?
-    """, (sade_mahalle, ada_str, parsel_str))
+    """, (target_norm, mahalle, ada_str, parsel_str))
     
     result = cursor.fetchone()
     conn.close()
@@ -320,6 +357,7 @@ with st.sidebar:
             st.session_state.taks = hafiza_veri[2]
             st.session_state.ada = ada
             st.session_state.parsel = parsel
+            st.session_state.mahalle = hafiza_veri[3] if hafiza_veri[3] else mahalle
             st.success("✅ Veriler hafızadan başarıyla çekildi!")
             st.rerun()
         else:
