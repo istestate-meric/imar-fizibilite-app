@@ -3,7 +3,6 @@ import pdfplumber
 import re
 import streamlit as st
 
-# Page Configuration
 st.set_page_config(page_title="İmar & Fizibilite Analizi", layout="wide")
 
 
@@ -29,10 +28,8 @@ def parse_imar_pdf_multi_zone(uploaded_file):
     ada_val = "-"
     parsel_val = "-"
 
-    # Tablo hücrelerinden kontrol
     for row in tables_data:
         row_str = " ".join([str(cell) for cell in row if cell])
-
         ada_m = re.search(r"(?:Ada)\s*[:\n\s]*(\d+)", row_str, re.I)
         if ada_m and ada_val == "-":
             ada_val = ada_m.group(1)
@@ -41,13 +38,8 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         if parsel_m and parsel_val == "-":
             parsel_val = parsel_m.group(1)
 
-    # Metin içinden yedek regex
     if ada_val == "-":
-        ada_m = re.search(
-            r"Mahalle.*?Pafta.*?Ada\s*(\d+)", full_text, re.DOTALL
-        )
-        if not ada_m:
-            ada_m = re.search(r"Ada\s*[:\n\s|]+(\d+)", full_text, re.I)
+        ada_m = re.search(r"Ada\s*[:\n\s|]+(\d+)", full_text, re.I)
         if ada_m:
             ada_val = ada_m.group(1)
 
@@ -56,28 +48,42 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         if parsel_m:
             parsel_val = parsel_m.group(1)
 
-    # --- 2. TOPLAM PARSEL ALANI (m²) YAKALAMA ---
+    # --- 2. GERÇEK ANA PARSEL ALANI YAKALAMA ---
+    # "Alan *" etiketinin hemen yanındaki/altındaki metrekareyi doğrudan yakala
     m2_val = 0.0
-    alan_matches = re.findall(r"([\d\.,]+)\s*m²", full_text, re.I)
-    clean_m2_list = []
-
-    for raw_m2 in alan_matches:
+    main_area_m = re.search(
+        r"Alan\s*\*?\s*[:\n\s|]*([\d\.,]+)\s*m²", full_text, re.I
+    )
+    if main_area_m:
+        raw_m2 = main_area_m.group(1)
         clean_m2 = (
             raw_m2.replace(".", "").replace(",", ".")
             if "," in raw_m2 and "." in raw_m2
             else raw_m2.replace(",", ".")
         )
         try:
-            val = float(clean_m2)
-            clean_m2_list.append(val)
+            m2_val = float(clean_m2)
         except ValueError:
-            continue
+            m2_val = 0.0
 
-    # Belgedeki en büyük metrekare değeri ana tapu/grafik alanıdır
-    if clean_m2_list:
-        m2_val = max(clean_m2_list)
+    # Yedek: Regex bulamazsa metindeki en büyük m² değerini al
+    if m2_val == 0.0:
+        alan_matches = re.findall(r"([\d\.,]+)\s*m²", full_text, re.I)
+        clean_m2_list = []
+        for raw_m2 in alan_matches:
+            clean_m2 = (
+                raw_m2.replace(".", "").replace(",", ".")
+                if "," in raw_m2 and "." in raw_m2
+                else raw_m2.replace(",", ".")
+            )
+            try:
+                clean_m2_list.append(float(clean_m2))
+            except ValueError:
+                continue
+        if clean_m2_list:
+            m2_val = max(clean_m2_list)
 
-    # --- 3. FONKSİYONLAR VE KAKS/TAKS HESABI ---
+    # --- 3. PARÇALI FONKSİYON DETAYLARI VE KAKS/TAKS ---
     fonksiyonlar = []
     raw_blocks = re.split(r"Fonksiyon Adı", full_text, flags=re.IGNORECASE)
 
@@ -95,7 +101,7 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         if taks_m:
             taks = float(taks_m.group(1).replace(",", "."))
 
-        # KAKS
+        # KAKS / Emsal
         kaks = 0.0
         kaks_m = re.search(
             r"(Kaks|Emsal)\s*(\(Emsal\))?\s*[:\s|]*(\d+[\.,]\d+)", block, re.I
@@ -103,7 +109,7 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         if kaks_m:
             kaks = float(kaks_m.group(3).replace(",", "."))
 
-        # Fonksiyon m²
+        # Fonksiyon Alanı m²
         f_m2 = 0.0
         m2_f_match = re.search(r"([\d\.,]+)\s*m²", block, re.I)
         if m2_f_match:
@@ -119,17 +125,21 @@ def parse_imar_pdf_multi_zone(uploaded_file):
                 f_m2 = 0.0
 
         fonksiyonlar.append({
-            "fonksiyon_adi": f_adi,
-            "taks": taks,
-            "kaks": kaks,
-            "m2": f_m2,
+            "Fonksiyon": f_adi,
+            "TAKS": taks,
+            "KAKS (Emsal)": kaks,
+            "Alan (m²)": f_m2,
         })
 
     # Ağırlıklı KAKS/TAKS Hesabı
-    imarli_fonksiyonlar = [f for f in fonksiyonlar if f["kaks"] > 0]
-    toplam_imar_m2 = sum(f["m2"] for f in imarli_fonksiyonlar)
-    toplam_emsal_m2 = sum(f["m2"] * f["kaks"] for f in imarli_fonksiyonlar)
-    toplam_zemin_m2 = sum(f["m2"] * f["taks"] for f in imarli_fonksiyonlar)
+    imarli_fonksiyonlar = [f for f in fonksiyonlar if f["KAKS (Emsal)"] > 0]
+    toplam_imar_m2 = sum(f["Alan (m²)"] for f in imarli_fonksiyonlar)
+    toplam_emsal_m2 = sum(
+        f["Alan (m²)"] * f["KAKS (Emsal)"] for f in imarli_fonksiyonlar
+    )
+    toplam_zemin_m2 = sum(
+        f["Alan (m²)"] * f["TAKS"] for f in imarli_fonksiyonlar
+    )
 
     agirlikli_kaks = (
         toplam_emsal_m2 / toplam_imar_m2 if toplam_imar_m2 > 0 else 0.30
@@ -149,10 +159,9 @@ def parse_imar_pdf_multi_zone(uploaded_file):
     }
 
 
-# --- UI ARAYÜZÜ ---
+# --- ARAYÜZ ---
 st.title("📌 İmar & Fizibilite Analiz Portalı")
 
-# Yan Panel / Parametreler
 with st.sidebar:
     st.header("📂 Belge Yükleme (PDF)")
     uploaded_files = st.file_uploader(
@@ -185,17 +194,19 @@ if uploaded_files:
             results.append(parsed_data)
 
     if results:
-        # Üst Bilgi Kartları
         for data in results:
             with st.expander(
-                f"📌 {data['dosya_adi']} - Tespit Edilen İmar Fonksiyonları",
+                f"📌 {data['dosya_adi']} - Ada: {data['ada']} / Parsel: {data['parsel']}",
                 expanded=True,
             ):
                 col1, col2, col3, col4, col5 = st.columns(5)
                 col1.text_input("Ada", value=data["ada"], disabled=True)
                 col2.text_input("Parsel", value=data["parsel"], disabled=True)
                 col3.number_input(
-                    "m²", value=float(data["m2"]), format="%.2f", disabled=True
+                    "Toplam Arazi m²",
+                    value=float(data["m2"]),
+                    format="%.2f",
+                    disabled=True,
                 )
 
                 selected_kaks = (
@@ -211,6 +222,12 @@ if uploaded_files:
                 terk_tipi = col5.radio(
                     "Terk Durumu", ["Brüt", "Net"], key=f"terk_{data['dosya_adi']}"
                 )
+
+                # Tespit Edilen Alt Fonksiyonlar Tablosu
+                st.write("**Tespit Edilen İmar Fonksiyonları Dağılımı**")
+                if data["fonksiyonlar"]:
+                    df_fonk = pd.DataFrame(data["fonksiyonlar"])
+                    st.dataframe(df_fonk, use_container_width=True)
 
         st.subheader("📊 İmar Hesaplama Sonuçları")
 
@@ -246,8 +263,8 @@ if uploaded_files:
         df_results = pd.DataFrame(table_rows)
         st.dataframe(df_results, use_container_width=True)
 
-        # Özet Tablo
-        st.write("**Özet Metrikler**")
+        # Özet Metrikler Tablosu
+        st.write("**Özet Fizibilite Metrikleri**")
         summary_df = pd.DataFrame({
             "Metrik": [
                 "Toplam Brüt Arazi m²",
@@ -268,4 +285,4 @@ if uploaded_files:
         })
         st.table(summary_df)
 else:
-    st.info("Lütfen sol panelden en az bir adet İmar Durumu PDF raporu yükleyin.")
+    st.info("Lütfen sol panelden bir veya daha fazla İmar Raporu PDF'i yükleyin.")
