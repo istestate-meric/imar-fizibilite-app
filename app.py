@@ -30,7 +30,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# BÖLGE VE YALIN MAHALLE HİYERARŞİSİ
+# BÖLGE VE MAHALLE HİYERARŞİSİ
 # ---------------------------------------------------------
 BOLGE_MAHALLE_HARITASI = {
     "Anadoluhisarı": ["Anadolu Hisarı", "Kanlıca", "Kavacık"],
@@ -71,9 +71,16 @@ BOLGE_MAHALLE_HARITASI = {
     ],
 }
 
+IMAR_FONKSIYONLARI = [
+    "KONUT ALANI",
+    "TİCARET VE KONUT ALANI",
+    "TİCARET ALANI",
+    "TURİZM ALANI",
+    "SANAYİ ALANI",
+]
+
 
 def clean_mahalle_name(name):
-    """Metin içindeki Mh., Mah., Mahallesi gibi ekleri ve gereksiz boşlukları temizler."""
     if not name:
         return ""
     name = str(name).strip()
@@ -86,7 +93,6 @@ def clean_mahalle_name(name):
 
 
 def init_db():
-    """SQLite Veritabanı ve tablosunu güvenli şekilde ilklendirir."""
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
         cursor = conn.cursor()
@@ -100,10 +106,19 @@ def init_db():
                 tapu_alani REAL,
                 kaks REAL,
                 taks REAL,
+                imar_fonksiyonu TEXT,
                 UNIQUE(mahalle, ada, parsel)
             )
         """
         )
+        # Sütun yoksa geriye dönük uyumluluk için ekleyelim
+        cursor.execute("PRAGMA table_info(imar_kayitlari)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if "imar_fonksiyonu" not in columns:
+            cursor.execute(
+                "ALTER TABLE imar_kayitlari ADD COLUMN imar_fonksiyonu TEXT"
+            )
+
         conn.commit()
         conn.close()
     except Exception as e:
@@ -113,19 +128,22 @@ def init_db():
 init_db()
 
 
-def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
+def db_kayit_ekle_veya_guncelle(
+    mahalle, ada, parsel, tapu_alani, kaks, taks, imar_fonksiyonu
+):
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
         cursor = conn.cursor()
         sade_mahalle = clean_mahalle_name(mahalle).upper()
         cursor.execute(
             """
-            INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, kaks, taks)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, kaks, taks, imar_fonksiyonu)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(mahalle, ada, parsel) DO UPDATE SET
                 tapu_alani=excluded.tapu_alani,
                 kaks=excluded.kaks,
-                taks=excluded.taks
+                taks=excluded.taks,
+                imar_fonksiyonu=excluded.imar_fonksiyonu
         """,
             (
                 sade_mahalle,
@@ -134,6 +152,7 @@ def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
                 float(tapu_alani),
                 float(kaks),
                 float(taks),
+                str(imar_fonksiyonu),
             ),
         )
         conn.commit()
@@ -154,7 +173,7 @@ def db_kayit_sil(record_id):
 
 
 def db_kayit_sorgula(ada, parsel):
-    """Sadece Ada ve Parsel üzerinden veritabanından eşleşen kaydı getirir."""
+    """Sadece Ada ve Parsel üzerinden mahalle, emsal ve imar fonksiyonunu getirir."""
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
         cursor = conn.cursor()
@@ -164,7 +183,7 @@ def db_kayit_sorgula(ada, parsel):
 
         cursor.execute(
             """
-            SELECT mahalle, tapu_alani, kaks, taks FROM imar_kayitlari 
+            SELECT mahalle, tapu_alani, kaks, taks, imar_fonksiyonu FROM imar_kayitlari 
             WHERE CAST(ada AS TEXT) = ? 
               AND CAST(parsel AS TEXT) = ?
         """,
@@ -174,16 +193,13 @@ def db_kayit_sorgula(ada, parsel):
         result = cursor.fetchone()
         conn.close()
         return result
-    except sqlite3.OperationalError as e:
-        st.error(f"Veritabanı Sorgu Hatası: {e}")
-        return None
     except Exception as e:
         st.error(f"Veritabanı Okuma Hatası: {e}")
         return None
 
 
 # ---------------------------------------------------------
-# CSS VE YARDIMCI FONKSİYONLAR
+# STİL VE YARDIMCI METOTLAR
 # ---------------------------------------------------------
 st.markdown(
     """
@@ -313,6 +329,8 @@ if "kaks" not in st.session_state:
     st.session_state.kaks = 0.45
 if "taks" not in st.session_state:
     st.session_state.taks = 0.30
+if "imar_fonksiyonu" not in st.session_state:
+    st.session_state.imar_fonksiyonu = "KONUT ALANI"
 if "last_uploaded_filename" not in st.session_state:
     st.session_state.last_uploaded_filename = None
 if "last_searched_key" not in st.session_state:
@@ -358,7 +376,9 @@ with st.sidebar:
 
     if uploaded_pdf is not None:
         if st.session_state.last_uploaded_filename != uploaded_pdf.name:
-            with st.spinner("PDF ve Hafıza Sorgulanıyor..."):
+            with st.spinner(
+                "PDF Analiz Ediliyor & Otomatik Dolduruluyor..."
+            ):
                 try:
                     with pdfplumber.open(uploaded_pdf) as pdf:
                         extracted_text = "\n".join(
@@ -377,6 +397,7 @@ with st.sidebar:
                         - tapu_alani (sayı)
                         - kaks (sayı)
                         - taks (sayı)
+                        - imar_fonksiyonu (Örn: KONUT ALANI, TİCARET VE KONUT ALANI, TİCARET ALANI vb.)
 
                         PDF Metni:
                         {extracted_text[:4000]}
@@ -389,9 +410,24 @@ with st.sidebar:
 
                         if clean_json:
                             data = json.loads(clean_json.group())
-                            st.session_state.mahalle = clean_mahalle_name(
+
+                            # Çekilen Mahalleden Bölgeyi Otomatik Tespit Etme
+                            gelen_mahalle = clean_mahalle_name(
                                 data.get("mahalle", st.session_state.mahalle)
                             )
+                            for (
+                                b_adi,
+                                m_listesi,
+                            ) in BOLGE_MAHALLE_HARITASI.items():
+                                for m in m_listesi:
+                                    if (
+                                        clean_mahalle_name(m).upper()
+                                        == gelen_mahalle.upper()
+                                    ):
+                                        st.session_state.bolge = b_adi
+                                        st.session_state.mahalle = m
+                                        break
+
                             st.session_state.ada = str(
                                 data.get("ada", st.session_state.ada)
                             )
@@ -410,6 +446,12 @@ with st.sidebar:
                                 data.get("taks", st.session_state.taks)
                             )
 
+                            if data.get("imar_fonksiyonu"):
+                                st.session_state.imar_fonksiyonu = str(
+                                    data.get("imar_fonksiyonu")
+                                ).upper()
+
+                            # Veritabanına kaydet
                             db_kayit_ekle_veya_guncelle(
                                 st.session_state.mahalle,
                                 st.session_state.ada,
@@ -417,12 +459,15 @@ with st.sidebar:
                                 st.session_state.tapu_alani,
                                 st.session_state.kaks,
                                 st.session_state.taks,
+                                st.session_state.imar_fonksiyonu,
                             )
+
                             st.session_state.last_uploaded_filename = (
                                 uploaded_pdf.name
                             )
                             st.toast(
-                                "PDF Okundu ve Hafızaya Kaydedildi!", icon="⚡"
+                                "PDF Bilgileri Okundu ve Arayüze Aktarıldı!",
+                                icon="⚡",
                             )
                             st.rerun()
 
@@ -438,14 +483,20 @@ with st.sidebar:
     with col_p:
         parsel = st.text_input("Parsel No", value=st.session_state.parsel)
 
-    # HAFIZADAN ADA VE PARSEL BAZLI SORGULAMA BUTONU
+    # HAFIZADAN ADA VE PARSEL BAZLI SORGULAMA
     if st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True):
         hafiza_veri = db_kayit_sorgula(ada, parsel)
         if hafiza_veri:
-            kayitli_mahalle, kayitli_tapu, kayitli_kaks, kayitli_taks = hafiza_veri
+            (
+                kayitli_mahalle,
+                kayitli_tapu,
+                kayitli_kaks,
+                kayitli_taks,
+                kayitli_imar_fonks,
+            ) = hafiza_veri
             sade_kayitli_mahalle = clean_mahalle_name(kayitli_mahalle)
 
-            # Mahalle verisinden ilgili Bölgeyi ve orijinal Mahalle adını tespit etme
+            # Mahalleden Bölgeyi Otomatik Bul
             bulunan_bolge = None
             for bolge_adi, mahalleler in BOLGE_MAHALLE_HARITASI.items():
                 for m in mahalleler:
@@ -467,11 +518,14 @@ with st.sidebar:
             st.session_state.tapu_alani = kayitli_tapu
             st.session_state.kaks = kayitli_kaks
             st.session_state.taks = kayitli_taks
+            if kayitli_imar_fonks:
+                st.session_state.imar_fonksiyonu = kayitli_imar_fonks
+
             st.session_state.ada = str(ada).strip()
             st.session_state.parsel = str(parsel).strip()
 
             st.success(
-                f"✅ Ada: {ada} / Parsel: {parsel} eşleşti! ({st.session_state.mahalle} Mahallesi yüklendi)"
+                f"✅ **Ada: {ada} / Parsel: {parsel}** eşleşti! Bölge, Mahalle ve İmar Fonksiyonu aktarıldı."
             )
             st.rerun()
         else:
@@ -490,9 +544,8 @@ with st.sidebar:
     )
     st.session_state.bolge = selected_bolge
 
-    # Seçilen Bölgeye Göre Mahalle Seçimi
+    # Mahalle Seçimi
     bagli_mahalleler = BOLGE_MAHALLE_HARITASI[selected_bolge]
-
     current_sade_mahalle = clean_mahalle_name(st.session_state.mahalle)
     selected_mahalle_index = 0
     for idx, m in enumerate(bagli_mahalleler):
@@ -507,10 +560,20 @@ with st.sidebar:
     )
     st.session_state.mahalle = mahalle
 
+    # İmar Fonksiyon Alanı Seçimi (Otomatik eşleşmeli)
+    imar_fonks_index = 0
+    for idx, f in enumerate(IMAR_FONKSIYONLARI):
+        if f.upper() == str(st.session_state.imar_fonksiyonu).upper():
+            imar_fonks_index = idx
+            break
+
     imar_fonksiyonu = st.selectbox(
         "İmar Fonksiyon Alanı",
-        ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"],
+        options=IMAR_FONKSIYONLARI,
+        index=imar_fonks_index,
     )
+    st.session_state.imar_fonksiyonu = imar_fonksiyonu
+
     yapi_tipolojisi = st.selectbox(
         "Mimari Yapı Tipolojisi Tercihi",
         [
@@ -563,7 +626,7 @@ with st.sidebar:
         "💾 Mevcut Verileri Hafızaya Kaydet", use_container_width=True
     ):
         db_kayit_ekle_veya_guncelle(
-            mahalle, ada, parsel, tapu_alani, kaks, taks
+            mahalle, ada, parsel, tapu_alani, kaks, taks, imar_fonksiyonu
         )
         st.toast("Veriler başarıyla hafızaya kaydedildi!", icon="✅")
 
@@ -625,7 +688,7 @@ with st.sidebar:
         "Ortalama Ünite Brüt m²", value=200, step=10
     )
 
-# TEMEL İMAR HESAPLARI
+# İMAR HESAPLARI
 if terk_durumu or nitelik.lower() == "arsa":
     net_alan = tapu_alani
     kesinti_orani = 0.0
@@ -774,7 +837,7 @@ with tab4:
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
         df_db = pd.read_sql_query(
-            "SELECT id, mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, tapu_alani AS 'Tapu Alanı', kaks AS KAKS, taks AS TAKS FROM imar_kayitlari",
+            "SELECT id, mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, imar_fonksiyonu AS 'İmar Fonksiyonu', tapu_alani AS 'Tapu Alanı', kaks AS KAKS, taks AS TAKS FROM imar_kayitlari",
             conn,
         )
         conn.close()
