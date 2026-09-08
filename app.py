@@ -37,7 +37,7 @@ st.markdown(
 )
 
 
-# --- 1. OCR & PDF PARSER MODÜLÜ ---
+# --- 1. GELİŞTİRİLMİŞ OCR & PDF PARSER MODÜLÜ ---
 def parse_imar_pdf(uploaded_file):
     text = ""
     with pdfplumber.open(uploaded_file) as pdf:
@@ -46,23 +46,58 @@ def parse_imar_pdf(uploaded_file):
             if t:
                 text += t + "\n"
 
+    # 1. Ada & Parsel Yakalama (Tablo ve Metin Formatları İçin Esnek Regex)
+    ada_match = re.search(r"Ada\s*[:\s|]+(\d+)", text, re.IGNORECASE)
+    parsel_match = re.search(r"Parsel\s*[:\s|]+(\d+)", text, re.IGNORECASE)
+
+    ada_val = ada_match.group(1) if ada_match else "-"
+    parsel_val = parsel_match.group(1) if parsel_match else "-"
+
+    # Beykoz Belediyesi vb. Tablo Formatı Kontrolü (Ada ve Parsel Yan Yana/Alt Alta İse)
+    if ada_val == "-":
+        ada_parsel_alt_alta = re.search(r"(\d{3,5})\s*\|\s*(\d{1,4})", text)
+        if ada_parsel_alt_alta:
+            ada_val = ada_parsel_alt_alta.group(1)
+            parsel_val = ada_parsel_alt_alta.group(2)
+
+    # 2. Arazi m² Yakalama (Binlik Ayraç ve Nokta/Virgül Temizliği)
+    m2_val = 0.0
     m2_match = re.search(
-        r"(\d+[\.,]?\d*)\*?\s*(m2|m²|Metrekare)", text, re.IGNORECASE
+        r"([\d\.,]+)\s*(m2|m²|Metrekare)", text, re.IGNORECASE
     )
+    if m2_match:
+        raw_m2 = m2_match.group(1).strip()
+        if "," in raw_m2 and "." in raw_m2:
+            if raw_m2.find(",") < raw_m2.find("."):
+                raw_m2 = raw_m2.replace(",", "")  # 2,001.35 -> 2001.35
+            else:
+                raw_m2 = raw_m2.replace(".", "").replace(
+                    ",", "."
+                )  # 2.001,35 -> 2001.35
+        elif "," in raw_m2:
+            raw_m2 = raw_m2.replace(",", ".")
+        try:
+            m2_val = float(raw_m2)
+        except ValueError:
+            m2_val = 0.0
+
+    # 3. KAKS (Emsal) Yakalama
+    kaks_val = 0.70
     kaks_match = re.search(
-        r"(Emsal|KAKS)\s*:\s*(\d+[\.,]?\d*)", text, re.IGNORECASE
+        r"(Emsal|KAKS)\s*[:\s|\(]*\s*(\d+[\.,]?\d*)", text, re.IGNORECASE
     )
-    ada_match = re.search(r"Ada\s*:\s*(\d+)", text, re.IGNORECASE)
-    parsel_match = re.search(r"Parsel\s*:\s*(\d+)", text, re.IGNORECASE)
+    if kaks_match:
+        try:
+            kaks_val = float(kaks_match.group(2).replace(",", "."))
+        except ValueError:
+            kaks_val = 0.70
 
     return {
         "dosya_adi": uploaded_file.name,
-        "ada": ada_match.group(1) if ada_match else "-",
-        "parsel": parsel_match.group(1) if parsel_match else "-",
-        "m2": float(m2_match.group(1).replace(",", ".")) if m2_match else 0.0,
-        "kaks": float(kaks_match.group(2).replace(",", "."))
-        if kaks_match
-        else 0.70,
+        "ada": ada_val,
+        "parsel": parsel_val,
+        "m2": m2_val,
+        "kaks": kaks_val,
         "ham_metin": text,
     }
 
@@ -316,9 +351,9 @@ if uploaded_files:
         })
 else:
     col1, col2, col3, col4 = st.columns([2, 2, 2, 3])
-    ada = col1.text_input("Ada", value="1437")
-    parsel = col2.text_input("Parsel", value="17")
-    m2 = col3.number_input("Arazi m²", value=1000.0)
+    ada = col1.text_input("Ada", value="1617")
+    parsel = col2.text_input("Parsel", value="14")
+    m2 = col3.number_input("Arazi m²", value=2001.35)
     terk_durumu = col4.radio(
         "Terk Durumu", ("Brüt", "Net"), index=0, horizontal=True
     )
