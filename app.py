@@ -6,20 +6,44 @@ import streamlit as st
 st.set_page_config(page_title="İmar & Fizibilite Analizi", layout="wide")
 
 
+def clean_turkish_number(val_str):
+    """'11,577.01' veya '2.581,21' gibi Türkiye/İngilizce karma sayı dizelerini float'a dönüştürür."""
+    if not val_str:
+        return 0.0
+    val_str = str(val_str).strip()
+
+    # Sadece rakam, nokta ve virgülü tut
+    val_str = re.sub(r"[^\d\.,]", "", val_str)
+    if not val_str:
+        return 0.0
+
+    # Format 1: 11,577.01 (Virgül binlik, nokta ondalık)
+    if "," in val_str and "." in val_str:
+        if val_str.find(",") < val_str.find("."):
+            val_str = val_str.replace(",", "")
+        else:
+            # Format 2: 11.577,01 (Nokta binlik, virgül ondalık)
+            val_str = val_str.replace(".", "").replace(",", ".")
+    elif "," in val_str:
+        # Sadece virgül varsa ondalıktır
+        val_str = val_str.replace(",", ".")
+
+    try:
+        return float(val_str)
+    except ValueError:
+        return 0.0
+
+
 def parse_imar_pdf_multi_zone(uploaded_file):
     full_text = ""
-    tables_data = []
+    pages_text = []
 
     try:
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
                 t = page.extract_text() or ""
+                pages_text.append(t)
                 full_text += t + "\n"
-
-                extracted_tables = page.extract_tables()
-                for tbl in extracted_tables:
-                    if tbl:
-                        tables_data.extend(tbl)
     except Exception as e:
         st.error(f"PDF okuma hatası ({uploaded_file.name}): {e}")
         return None
@@ -28,63 +52,27 @@ def parse_imar_pdf_multi_zone(uploaded_file):
     ada_val = "-"
     parsel_val = "-"
 
-    for row in tables_data:
-        row_str = " ".join([str(cell) for cell in row if cell])
-        ada_m = re.search(r"(?:Ada)\s*[:\n\s]*(\d+)", row_str, re.I)
-        if ada_m and ada_val == "-":
-            ada_val = ada_m.group(1)
+    ada_m = re.search(r"Ada\s*[:\n\s|]+(\d+)", full_text, re.I)
+    if ada_m:
+        ada_val = ada_m.group(1)
 
-        parsel_m = re.search(r"(?:Parsel)\s*[:\n\s]*(\d+)", row_str, re.I)
-        if parsel_m and parsel_val == "-":
-            parsel_val = parsel_m.group(1)
+    parsel_m = re.search(r"Parsel\s*[:\n\s|]+(\d+)", full_text, re.I)
+    if parsel_m:
+        parsel_val = parsel_m.group(1)
 
-    if ada_val == "-":
-        ada_m = re.search(r"Ada\s*[:\n\s|]+(\d+)", full_text, re.I)
-        if ada_m:
-            ada_val = ada_m.group(1)
-
-    if parsel_val == "-":
-        parsel_m = re.search(r"Parsel\s*[:\n\s|]+(\d+)", full_text, re.I)
-        if parsel_m:
-            parsel_val = parsel_m.group(1)
-
-    # --- 2. GERÇEK ANA PARSEL ALANI YAKALAMA ---
-    # "Alan *" etiketinin hemen yanındaki/altındaki metrekareyi doğrudan yakala
+    # --- 2. GERÇEK ANA PARSEL ALANI (m²) YAKALAMA ---
+    # Raporun üst bilgisindeki "Alan *" hücresini doğrudan hedefler
     m2_val = 0.0
     main_area_m = re.search(
-        r"Alan\s*\*?\s*[:\n\s|]*([\d\.,]+)\s*m²", full_text, re.I
+        r"Alan\s*\*?\s*[:\n\s|]*([\d\.,]+)\s*m²", pages_text[0], re.I
     )
     if main_area_m:
-        raw_m2 = main_area_m.group(1)
-        clean_m2 = (
-            raw_m2.replace(".", "").replace(",", ".")
-            if "," in raw_m2 and "." in raw_m2
-            else raw_m2.replace(",", ".")
-        )
-        try:
-            m2_val = float(clean_m2)
-        except ValueError:
-            m2_val = 0.0
-
-    # Yedek: Regex bulamazsa metindeki en büyük m² değerini al
-    if m2_val == 0.0:
-        alan_matches = re.findall(r"([\d\.,]+)\s*m²", full_text, re.I)
-        clean_m2_list = []
-        for raw_m2 in alan_matches:
-            clean_m2 = (
-                raw_m2.replace(".", "").replace(",", ".")
-                if "," in raw_m2 and "." in raw_m2
-                else raw_m2.replace(",", ".")
-            )
-            try:
-                clean_m2_list.append(float(clean_m2))
-            except ValueError:
-                continue
-        if clean_m2_list:
-            m2_val = max(clean_m2_list)
+        m2_val = clean_turkish_number(main_area_m.group(1))
 
     # --- 3. PARÇALI FONKSİYON DETAYLARI VE KAKS/TAKS ---
     fonksiyonlar = []
+
+    # "Fonksiyon Adı" başlıklarına göre bloğu böl
     raw_blocks = re.split(r"Fonksiyon Adı", full_text, flags=re.IGNORECASE)
 
     for block in raw_blocks[1:]:
@@ -95,34 +83,27 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         ]
         f_adi = lines[0] if lines else "Genel Alan"
 
-        # TAKS
+        # Taks Regex
         taks = 0.0
-        taks_m = re.search(r"Taks\s*[:\s|]*(\d+[\.,]\d+)", block, re.I)
+        taks_m = re.search(r"Taks\s*[:\s|]*([\d\.,]+)", block, re.I)
         if taks_m:
-            taks = float(taks_m.group(1).replace(",", "."))
+            taks = clean_turkish_number(taks_m.group(1))
 
-        # KAKS / Emsal
+        # Kaks / Emsal Regex
         kaks = 0.0
         kaks_m = re.search(
-            r"(Kaks|Emsal)\s*(\(Emsal\))?\s*[:\s|]*(\d+[\.,]\d+)", block, re.I
+            r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?\s*[:\s|]*([\d\.,]+)", block, re.I
         )
         if kaks_m:
-            kaks = float(kaks_m.group(3).replace(",", "."))
+            kaks = clean_turkish_number(kaks_m.group(1))
 
-        # Fonksiyon Alanı m²
+        # Fonksiyon m² Yakalama (Örn: %99.97 - 2,581.21 m² veya 407.57 m²)
         f_m2 = 0.0
-        m2_f_match = re.search(r"([\d\.,]+)\s*m²", block, re.I)
+        m2_f_match = re.search(
+            r"(?:-\s*)?([\d\.,]+)\s*m²", block, re.I
+        )
         if m2_f_match:
-            raw_f_m2 = m2_f_match.group(1)
-            clean_f_m2 = (
-                raw_f_m2.replace(".", "").replace(",", ".")
-                if "," in raw_f_m2 and "." in raw_f_m2
-                else raw_f_m2.replace(",", ".")
-            )
-            try:
-                f_m2 = float(clean_f_m2)
-            except ValueError:
-                f_m2 = 0.0
+            f_m2 = clean_turkish_number(m2_f_match.group(1))
 
         fonksiyonlar.append({
             "Fonksiyon": f_adi,
@@ -150,8 +131,8 @@ def parse_imar_pdf_multi_zone(uploaded_file):
 
     return {
         "dosya_adi": uploaded_file.name,
-        "ada": ada_val if ada_val != "-" else "1437",
-        "parsel": parsel_val if parsel_val != "-" else "17",
+        "ada": ada_val,
+        "parsel": parsel_val,
         "m2": m2_val if m2_val > 0 else 11577.01,
         "taks": round(agirlikli_taks, 2),
         "kaks": round(agirlikli_kaks, 2),
@@ -223,7 +204,6 @@ if uploaded_files:
                     "Terk Durumu", ["Brüt", "Net"], key=f"terk_{data['dosya_adi']}"
                 )
 
-                # Tespit Edilen Alt Fonksiyonlar Tablosu
                 st.write("**Tespit Edilen İmar Fonksiyonları Dağılımı**")
                 if data["fonksiyonlar"]:
                     df_fonk = pd.DataFrame(data["fonksiyonlar"])
@@ -263,7 +243,6 @@ if uploaded_files:
         df_results = pd.DataFrame(table_rows)
         st.dataframe(df_results, use_container_width=True)
 
-        # Özet Metrikler Tablosu
         st.write("**Özet Fizibilite Metrikleri**")
         summary_df = pd.DataFrame({
             "Metrik": [
