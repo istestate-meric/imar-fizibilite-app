@@ -1,13 +1,15 @@
+import io
 import pandas as pd
 import pdfplumber
 import re
 import streamlit as st
 
-st.set_page_config(page_title="İmar & Fizibilite Analizi", layout="wide")
+st.set_page_config(
+    page_title="İmar & Toplu Fizibilite Analiz Portalı", layout="wide"
+)
 
 
 def clean_turkish_number(val_str):
-    """'11,577.01' veya '2.581,21' gibi Türkiye/İngilizce karma sayı dizelerini float'a dönüştürür."""
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
@@ -49,17 +51,16 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         st.error(f"PDF okuma hatası ({uploaded_file.name}): {e}")
         return None
 
-    # --- 1. ADA & PARSEL YAKALAMA (ÇOK KATMANLI DETEKSİYON) ---
+    # --- 1. ADA & PARSEL YAKALAMA ---
     ada_val = "-"
     parsel_val = "-"
 
-    # Yöntem A: Tablo Hücrelerinden Birebir Çekme (Beykoz PDF Yapısı)
+    # Tablo tabanlı arama
     for i, row in enumerate(tables_data):
         row_cells = [str(c).strip() for c in row if c is not None]
         row_str = " ".join(row_cells)
 
         if "Ada" in row_str and ada_val == "-":
-            # Bir alt satırdaki veya aynı satırdaki ilk rakam kümesini al
             nums = re.findall(r"\b\d+\b", row_str)
             if nums:
                 ada_val = nums[0]
@@ -85,35 +86,18 @@ def parse_imar_pdf_multi_zone(uploaded_file):
                 if next_nums:
                     parsel_val = next_nums[-1]
 
-    # Yöntem B: Esnek Metin Regex (Satır Sonları ve Boşluk Toleranslı)
+    # Regex düşüşü
     if ada_val == "-" or parsel_val == "-":
-        # ÇENGELDERE / 1437 / 17 bloğunu hedefler
-        block_m = re.search(
-            r"(?:ÇENGELDERE|GÖRELE|ÇİFTLİK|BAKLACI|YAVUZSELİM|FATİH)?[\s\n|]*(\d+)\b[\s\n|]*(\d+)\b",
-            full_text,
-            re.I,
+        m = re.search(
+            r"Ada[\s\n|:]*(\d+)[\s\n|]*Parsel[\s\n|:]*(\d+)", full_text, re.I
         )
-        if block_m:
-            if ada_val == "-":
-                ada_val = block_m.group(1)
-            if parsel_val == "-":
-                parsel_val = block_m.group(2)
-
-    # Yöntem C: Standart Regex Düşüşü
-    if ada_val == "-":
-        ada_m = re.search(r"Ada[\s\n|:]*(\d+)", full_text, re.I)
-        if ada_m:
-            ada_val = ada_m.group(1)
-
-    if parsel_val == "-":
-        parsel_m = re.search(r"Parsel[\s\n|:]*(\d+)", full_text, re.I)
-        if parsel_m:
-            parsel_val = parsel_m.group(1)
+        if m:
+            ada_val, parsel_val = m.group(1), m.group(2)
 
     # --- 2. GERÇEK ANA PARSEL ALANI (m²) YAKALAMA ---
     m2_val = 0.0
     main_area_m = re.search(
-        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²", pages_text[0], re.I
+        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²", full_text, re.I
     )
     if main_area_m:
         m2_val = clean_turkish_number(main_area_m.group(1))
@@ -154,7 +138,6 @@ def parse_imar_pdf_multi_zone(uploaded_file):
             "Alan (m²)": f_m2,
         })
 
-    # Ağırlıklı KAKS/TAKS Hesabı
     imarli_fonksiyonlar = [f for f in fonksiyonlar if f["KAKS (Emsal)"] > 0]
     toplam_imar_m2 = sum(f["Alan (m²)"] for f in imarli_fonksiyonlar)
     toplam_emsal_m2 = sum(
@@ -175,7 +158,7 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         "dosya_adi": uploaded_file.name,
         "ada": ada_val,
         "parsel": parsel_val,
-        "m2": m2_val if m2_val > 0 else 11577.01,
+        "m2": m2_val,
         "taks": round(agirlikli_taks, 2),
         "kaks": round(agirlikli_kaks, 2),
         "fonksiyonlar": fonksiyonlar,
@@ -186,14 +169,14 @@ def parse_imar_pdf_multi_zone(uploaded_file):
 st.title("📌 İmar & Fizibilite Analiz Portalı")
 
 with st.sidebar:
-    st.header("📂 Belge Yükleme (PDF)")
+    st.header("📂 Toplu Belge Yükleme")
     uploaded_files = st.file_uploader(
-        "İmar Raporu PDF'lerini Yükleyin",
+        "İmar Raporu PDF'lerini Yükleyin (Çoklu Seçim)",
         type=["pdf"],
         accept_multiple_files=True,
     )
 
-    st.header("⚙️ Parametreler")
+    st.header("⚙️ İmar & Terk Parametreleri")
     override_kaks = st.checkbox("Tevhit/Özel KAKS Kullan (PDF'leri Ez)")
     custom_kaks = st.number_input(
         "Birleşik KAKS", min_value=0.0, max_value=3.0, value=0.70, step=0.05
@@ -209,6 +192,24 @@ with st.sidebar:
         / 100.0
     )
 
+    st.header("💰 Finansal & Paylaşım Oranları")
+    mutaahhit_payi = (
+        st.number_input(
+            "Müteahhit Payı (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=50.0,
+            step=5.0,
+        )
+        / 100.0
+    )
+    insaat_maliyeti_m2 = st.number_input(
+        "İnşaat M² Maliyeti ($)", min_value=0, value=800, step=50
+    )
+    satis_fiyati_m2 = st.number_input(
+        "Satış M² Fiyatı ($)", min_value=0, value=2500, step=100
+    )
+
 if uploaded_files:
     results = []
     for pdf_file in uploaded_files:
@@ -217,93 +218,81 @@ if uploaded_files:
             results.append(parsed_data)
 
     if results:
-        for data in results:
-            with st.expander(
-                f"📌 {data['dosya_adi']} - Ada: {data['ada']} / Parsel: {data['parsel']}",
-                expanded=True,
-            ):
-                col1, col2, col3, col4, col5 = st.columns(5)
-                col1.text_input("Ada", value=data["ada"], disabled=True)
-                col2.text_input("Parsel", value=data["parsel"], disabled=True)
-                col3.number_input(
-                    "Toplam Arazi m²",
-                    value=float(data["m2"]),
-                    format="%.2f",
-                    disabled=True,
-                )
-
-                selected_kaks = (
-                    custom_kaks if override_kaks else data["kaks"]
-                )
-                col4.number_input(
-                    "Ağırlıklı KAKS",
-                    value=float(selected_kaks),
-                    format="%.2f",
-                    disabled=True,
-                )
-
-                terk_tipi = col5.radio(
-                    "Terk Durumu", ["Brüt", "Net"], key=f"terk_{data['dosya_adi']}"
-                )
-
-                st.write("**Tespit Edilen İmar Fonksiyonları Dağılımı**")
-                if data["fonksiyonlar"]:
-                    df_fonk = pd.DataFrame(data["fonksiyonlar"])
-                    st.dataframe(df_fonk, use_container_width=True)
-
-        st.subheader("📊 İmar Hesaplama Sonuçları")
-
         table_rows = []
         for data in results:
             gross_m2 = data["m2"]
             kaks_to_use = custom_kaks if override_kaks else data["kaks"]
 
-            if terk_tipi == "Brüt":
-                terk_m2 = gross_m2 * terk_orani
-                net_m2 = gross_m2 - terk_m2
-            else:
-                net_m2 = gross_m2
-                terk_m2 = 0.0
+            terk_m2 = gross_m2 * terk_orani
+            net_m2 = gross_m2 - terk_m2
 
             emsal_insaat_m2 = net_m2 * kaks_to_use
             toplam_brut_insaat_m2 = emsal_insaat_m2 * 1.30
             zemin_oturumu_m2 = net_m2 * data["taks"]
 
+            # Finansal
+            mutaahhit_brut_m2 = toplam_brut_insaat_m2 * mutaahhit_payi
+            arsa_sahibi_brut_m2 = toplam_brut_insaat_m2 * (1 - mutaahhit_payi)
+            toplam_maliyet = toplam_brut_insaat_m2 * insaat_maliyeti_m2
+            mutaahhit_ciro = mutaahhit_brut_m2 * satis_fiyati_m2
+            mutaahhit_kar = mutaahhit_ciro - toplam_maliyet
+
             table_rows.append({
+                "Dosya": data["dosya_adi"],
                 "Ada/Parsel": f"{data['ada']}/{data['parsel']}",
-                "Girdi m²": gross_m2,
-                "Terk Durumu": terk_tipi,
+                "Girdi Brüt m²": gross_m2,
                 "Net m²": net_m2,
                 "Terk m²": terk_m2,
                 "TAKS": data["taks"],
-                "Ağırlıklı KAKS": kaks_to_use,
+                "KAKS": kaks_to_use,
                 "Emsal İnşaat m²": emsal_insaat_m2,
-                "Satılabilir Brut İnşaat m² (x1.3)": toplam_brut_insaat_m2,
-                "Zemin Oturumu (TAKS) m²": zemin_oturumu_m2,
+                "Satılabilir Toplam İnşaat m² (x1.3)": toplam_brut_insaat_m2,
+                "Zemin Oturumu m²": zemin_oturumu_m2,
+                "Müteahhit İnşaat m²": mutaahhit_brut_m2,
+                "Arsa Sahibi İnşaat m²": arsa_sahibi_brut_m2,
+                "Toplam İnşaat Maliyeti ($)": toplam_maliyet,
+                "Müteahhit Ciro ($)": mutaahhit_ciro,
+                "Müteahhit Tahmini Kar ($)": mutaahhit_kar,
             })
 
         df_results = pd.DataFrame(table_rows)
+
+        st.subheader("📊 Toplu İmar ve Finansal Analiz Tablosu")
         st.dataframe(df_results, use_container_width=True)
 
-        st.write("**Özet Fizibilite Metrikleri**")
-        summary_df = pd.DataFrame({
-            "Metrik": [
-                "Toplam Brüt Arazi m²",
-                "Toplam Kamusal Terk m²",
-                "Toplam Net Arazi m²",
-                "Emsal İçi İnşaat m²",
-                "Satılabilir Toplam Brüt İnşaat m² (x1.3)",
-                "Zemin Oturumu (TAKS) m²",
-            ],
-            "Değer": [
-                f"{df_results['Girdi m²'].sum():,.2f}",
-                f"{df_results['Terk m²'].sum():,.2f}",
-                f"{df_results['Net m²'].sum():,.2f}",
-                f"{df_results['Emsal İnşaat m²'].sum():,.2f}",
-                f"{df_results['Satılabilir Brut İnşaat m² (x1.3)'].sum():,.2f}",
-                f"{df_results['Zemin Oturumu (TAKS) m²'].sum():,.2f}",
-            ],
-        })
-        st.table(summary_df)
+        st.subheader("📈 Toplam Bölgesel Özet Fizibilite")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Toplam Brüt Arazi", f"{df_results['Girdi Brüt m²'].sum():,.2f} m²"
+        )
+        c2.metric(
+            "Satılabilir Toplam İnşaat",
+            f"{df_results['Satılabilir Toplam İnşaat m² (x1.3)'].sum():,.2f} m²",
+        )
+        c3.metric(
+            "Toplam Maliyet",
+            f"${df_results['Toplam İnşaat Maliyeti ($)'].sum():,.2f}",
+        )
+        c4.metric(
+            "Müteahhit Toplam Kar",
+            f"${df_results['Müteahhit Tahmini Kar ($)'].sum():,.2f}",
+        )
+
+        # Excel İndirme
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df_results.to_excel(
+                writer, sheet_name="Fizibilite Raporu", index=False
+            )
+        excel_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Sonuçları Excel Olarak İndir",
+            data=excel_data,
+            file_name="imar_fizibilite_raporu.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 else:
-    st.info("Lütfen sol panelden bir veya daha fazla İmar Raporu PDF'i yükleyin.")
+    st.info(
+        "Lütfen sol taraftaki panelden analiz etmek istediğiniz PDF veya PDF grubunu yükleyin."
+    )
