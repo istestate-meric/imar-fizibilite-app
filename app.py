@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import pandas as pd
 import streamlit as st
 import pdfplumber
@@ -12,27 +13,83 @@ from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer,
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
+# Session State Başlangıç Değerleri
+if "mahalle" not in st.session_state:
+    st.session_state.mahalle = "Çengeldere"
+if "ada" not in st.session_state:
+    st.session_state.ada = "1437"
+if "parsel" not in st.session_state:
+    st.session_state.parsel = "17"
+if "tapu_alani" not in st.session_state:
+    st.session_state.tapu_alani = 6398.86
+if "kaks" not in st.session_state:
+    st.session_state.kaks = 0.40
+if "taks" not in st.session_state:
+    st.session_state.taks = 0.30
+
 # Kurumsal Başlık
 st.title("İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK & MERİÇ İNŞAAT EMLAK")
 st.subheader("Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli")
 st.divider()
 
-# Yan Panel - PDF Yükleme ve Manuel Girdiler
+# Sol Panel
 with st.sidebar:
     st.header("1. Belge ile Otomatik Analiz")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
-    gemini_api_key = st.text_input("Gemini API Key (Opsiyonel OCR için)", type="password")
+    gemini_api_key = st.text_input("Gemini API Key", type="password")
+
+    # PDF Yüklendiğinde Otomatik Veri Çekme
+    if uploaded_pdf is not None and gemini_api_key:
+        if st.button("PDF Verilerini Forma Aktar"):
+            with st.spinner("PDF Analiz Ediliyor..."):
+                try:
+                    with pdfplumber.open(uploaded_pdf) as pdf:
+                        extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+
+                    genai.configure(api_key=gemini_api_key)
+                    model = genai.GenerativeModel('gemini-2.5-flash')
+                    
+                    prompt = f"""
+                    Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
+                    - mahalle (metin)
+                    - ada (metin)
+                    - parsel (metin)
+                    - tapu_alani (sayı)
+                    - kaks (sayı)
+                    - taks (sayı)
+
+                    PDF Metni:
+                    {extracted_text[:4000]}
+                    """
+                    
+                    response = model.generate_content(prompt)
+                    clean_json = re.search(r'\{.*\}', response.text, re.DOTALL)
+                    
+                    if clean_json:
+                        data = json.loads(clean_json.group())
+                        st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle))
+                        st.session_state.ada = str(data.get("ada", st.session_state.ada))
+                        st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
+                        st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
+                        st.session_state.kaks = float(data.get("kaks", st.session_state.kaks))
+                        st.session_state.taks = float(data.get("taks", st.session_state.taks))
+                        st.success("Bilgiler PDF'ten başarıyla aktarıldı!")
+                        st.rerun()
+                    else:
+                        st.error("JSON verisi çözümlenemedi.")
+                except Exception as e:
+                    st.error(f"Hata Oluştu: {e}")
 
     st.header("2. Parsel & İmar Parametreleri")
-    mahalle = st.text_input("Mahalle", "Çengeldere")
-    ada = st.text_input("Ada No", "1437")
-    parsel = st.text_input("Parsel No", "17")
-    tapu_alani = st.number_input("Tapu Alanı (m²)", value=6398.86, step=10.0)
+    mahalle = st.text_input("Mahalle", value=st.session_state.mahalle)
+    ada = st.text_input("Ada No", value=st.session_state.ada)
+    parsel = st.text_input("Parsel No", value=st.session_state.parsel)
+    tapu_alani = st.number_input("Tapu Alanı (m²)", value=float(st.session_state.tapu_alani), step=10.0)
     nitelik = st.selectbox("Nitelik", ["Bahçe", "Arsa", "Tarla"])
     terk_durumu = st.checkbox("18. Madde Terki Yapıldı mı?", value=False)
     
-    kaks = st.number_input("KAKS (Emsal)", value=0.40, step=0.05)
-    taks = st.number_input("TAKS", value=0.30, step=0.05)
+    kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
+    taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
     sunum_tipi = st.selectbox("Sunum Modeli", ["Kat Karşılığı", "Satılık"])
 
     st.header("3. Finansal & Mimari Varsayımlar")
@@ -41,24 +98,7 @@ with st.sidebar:
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50)
     daire_m2 = st.number_input("Ort. Daire Brüt m²", value=120, step=10)
 
-# PDF Ayrıştırma Mantığı
-if uploaded_pdf is not None:
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-    st.sidebar.success("PDF İçeriği Okundu!")
-    
-    # API Anahtarı Varsa AI Ayıklama
-    if gemini_api_key:
-        try:
-            genai.configure(api_key=gemini_api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            prompt = f"Aşağıdaki imar raporu metninden şu bilgileri JSON formatında çıkar: mahalle, ada, parsel, tapu_alani, kaks, taks. Metin: {extracted_text[:2000]}"
-            response = model.generate_content(prompt)
-            st.sidebar.json(response.text)
-        except Exception as e:
-            st.sidebar.warning(f"AI Ayıklama Yapılamadı: {e}")
-
-# Matematiksel Fizibilite Hesaplamaları
+# Hesaplama Mantığı
 if terk_durumu or nitelik.lower() == 'arsa':
     net_alan = tapu_alani
     kesinti_orani = 0.0
@@ -73,12 +113,10 @@ ilave_emsal_harici = net_emsal_alani * 0.30
 toplam_brut_insaat = net_emsal_alani * 1.30
 max_taban_alani = net_alan * taks
 
-# Mimari & Finansal Metrikler
 toplam_daire_adedi = int(toplam_brut_insaat / daire_m2)
 toplam_insaat_maliyeti = toplam_brut_insaat * birim_maliyeti
 toplam_proje_geliri = toplam_brut_insaat * satis_m2_fiyati
 
-# Sunum Modeline Göre Finansal Ayrışma
 if sunum_tipi == "Kat Karşılığı":
     mutaahhit_payi_m2 = toplam_brut_insaat * (100 - kat_karsiligi_orani) / 100
     arsa_sahibi_payi_m2 = toplam_brut_insaat * kat_karsiligi_orani / 100
