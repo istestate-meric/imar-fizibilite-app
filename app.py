@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import re
@@ -17,48 +18,54 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# Türkçe Karakter Destekli Font Sistemi (Kesin Çözüm)
+# Dış Ağdan Bağımsız Garanti Türkçe Font Yükleme Sistemi
 @st.cache_resource
-def setup_tr_fonts():
-    # Alternatif font kaynakları (CDN engellerine karşı yedekli)
-    fonts = {
-        'Regular': [
-            "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf",
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/arial/Arial.ttf"
-        ],
-        'Bold': [
-            "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans-Bold.ttf",
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/arial/Arial-Bold.ttf"
-        ]
-    }
+def setup_embedded_turkish_font():
+    # 1. Önce doğrudan GitHub/CDN üzerinden indirmeyi dene
+    urls = [
+        "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf",
+        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts-ttf/master/ttf/DejaVuSans.ttf"
+    ]
     
-    font_name = "Helvetica"
-    font_bold = "Helvetica-Bold"
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                font_bytes = resp.read()
+                pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(font_bytes)))
+                pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(font_bytes)))
+                return 'TR_Font', 'TR_Font_Bold'
+        except Exception:
+            continue
 
-    for name, urls in fonts.items():
-        for url in urls:
+    # 2. Eğer ağ kapalıysa yerel sistemdeki DejaVu / Arial fontlarını tara
+    import os
+    system_fonts = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf"
+    ]
+    for font_path in system_fonts:
+        if os.path.exists(font_path):
             try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = resp.read()
-                    f_name = f'TR_Font_{name}'
-                    pdfmetrics.registerFont(TTFont(f_name, io.BytesIO(data)))
-                    if name == 'Regular': font_name = f_name
-                    else: font_bold = f_name
-                    break
+                pdfmetrics.registerFont(TTFont('TR_Font', font_path))
+                pdfmetrics.registerFont(TTFont('TR_Font_Bold', font_path))
+                return 'TR_Font', 'TR_Font_Bold'
             except Exception:
                 continue
 
-    return font_name, font_bold
+    return 'Helvetica', 'Helvetica-Bold'
 
-FONT_NAME, FONT_BOLD = setup_tr_fonts()
+FONT_NAME, FONT_BOLD = setup_embedded_turkish_font()
 
-# Gemini API Key Controls
+# Gemini API Key Secrets Kontrolü
 try:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
     gemini_api_key = None
 
+# Session State Başlangıç Değerleri
 if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuzselim"
 if "ada" not in st.session_state: st.session_state.ada = "1658"
 if "parsel" not in st.session_state: st.session_state.parsel = "1"
@@ -222,7 +229,7 @@ def yatay_kurumsal_pdf_olustur():
     )
     story = []
 
-    # Stiller
+    # Stil Tanımlamaları - Türkçe Font Zorunlu Kılındı
     banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
     th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
     td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
@@ -230,12 +237,11 @@ def yatay_kurumsal_pdf_olustur():
     section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
     footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
 
-    # Beyaz Arka Planlı Logo Alanı
+    # Beyaz Arka Planlı Tam Okunaklı Logolar
     try:
         img_ist = RLImage("istestate_logo.png", width=140, height=42)
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=150, height=42)
         
-        # Logoları Beyaz Kutu İçine Alma
         box_ist = Table([[img_ist]], colWidths=[146])
         box_ist.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.white),
@@ -281,7 +287,7 @@ def yatay_kurumsal_pdf_olustur():
     except Exception:
         pass
 
-    # Tablo 1
+    # Tablo 1: Parsel Bazlı Detay Tablosu
     story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", section_title))
 
     headers_t1 = [
@@ -322,7 +328,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 14))
 
-    # Tablo 2
+    # Tablo 2: Fizibilite Analizi Tablosu
     story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", section_title))
 
     headers_t2 = [
@@ -359,7 +365,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table2)
     story.append(Spacer(1, 16))
 
-    # Alt Bilgi
+    # Alt Bilgi Metni
     iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
                f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
                f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
