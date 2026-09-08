@@ -47,6 +47,7 @@ with st.sidebar:
                         extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
 
                     genai.configure(api_key=gemini_api_key)
+                    # Güncel model sürümü: gemini-3.6-flash
                     model = genai.GenerativeModel('gemini-3.6-flash')
                     
                     prompt = f"""
