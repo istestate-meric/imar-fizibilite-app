@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# BÖLGE VE YALIN MAHALLE HİYERARŞİSİ ("Mh." EKLERİ KALDIRILDI)
+# BÖLGE VE YALIN MAHALLE HİYERARŞİSİ
 # ---------------------------------------------------------
 BOLGE_MAHALLE_HARITASI = {
     "Anadoluhisarı": ["Anadolu Hisarı", "Kanlıca", "Kavacık"],
@@ -47,9 +47,10 @@ def clean_mahalle_name(name):
     if not name:
         return ""
     name = str(name).strip()
-    # Eki ve varyasyonları temizle
     pattern = r'(?i)\b(ÇAVUŞBAŞI\s+)?(mh\.?|mah\.?|mahallesi)\b'
     cleaned = re.sub(pattern, '', name).strip()
+    # YAVUZSELİM / YAVUZ SELİM gibi standartlaştırma düzenlemesi
+    cleaned = cleaned.replace("YAVUZSELİM", "YAVUZ SELİM").replace("Yavuzselim", "Yavuz Selim")
     return cleaned if cleaned else name.strip()
 
 def init_db():
@@ -102,24 +103,15 @@ def db_kayit_sorgula(mahalle, ada, parsel):
     ada_str = str(ada).strip()
     parsel_str = str(parsel).strip()
 
-    # 1. Esnek LIKE ve Tam Eşleşme Sorgusu
+    # SADECE Mahalle, Ada ve Parsel BİREBİR EŞLEŞİRSE Veriyi Getir
     cursor.execute("""
         SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
-        WHERE (UPPER(mahalle) = ? OR UPPER(mahalle) LIKE ? OR ? LIKE '%' || UPPER(mahalle) || '%')
+        WHERE UPPER(mahalle) = ?
           AND CAST(ada AS TEXT) = ? 
           AND CAST(parsel AS TEXT) = ?
-    """, (sade_mahalle, f"%{sade_mahalle}%", sade_mahalle, ada_str, parsel_str))
+    """, (sade_mahalle, ada_str, parsel_str))
     
     result = cursor.fetchone()
-    
-    # 2. Eğer Mahalle İsmi Farklı Kaydedildiyse Sadece Ada/Parsel ile Son Çare Ara
-    if not result:
-        cursor.execute("""
-            SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
-            WHERE CAST(ada AS TEXT) = ? AND CAST(parsel AS TEXT) = ?
-        """, (ada_str, parsel_str))
-        result = cursor.fetchone()
-
     conn.close()
     return result
 
@@ -305,7 +297,7 @@ with st.sidebar:
     selected_bolge = st.selectbox("Bölge / Semt Seçin", options=bolge_listesi, index=bolge_listesi.index(st.session_state.bolge) if st.session_state.bolge in bolge_listesi else 2)
     st.session_state.bolge = selected_bolge
 
-    # Seçilen Bölgeye Göre Mahalle Seçimi (Yalın Liste)
+    # Seçilen Bölgeye Göre Mahalle Seçimi
     bagli_mahalleler = BOLGE_MAHALLE_HARITASI[selected_bolge]
     
     current_sade_mahalle = clean_mahalle_name(st.session_state.mahalle)
@@ -328,10 +320,10 @@ with st.sidebar:
             st.session_state.taks = hafiza_veri[2]
             st.session_state.ada = ada
             st.session_state.parsel = parsel
-            st.success("✅ Veriler hafızadan çekildi!")
+            st.success("✅ Veriler hafızadan başarıyla çekildi!")
             st.rerun()
         else:
-            st.error(f"❌ {mahalle} {ada}/{parsel} için kayıt bulunamadı.")
+            st.error(f"❌ {mahalle} - Ada: {ada} / Parsel: {parsel} için kayıt bulunamadı.")
 
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
@@ -473,7 +465,6 @@ with tab4:
     conn.close()
     
     if not df_db.empty:
-        # Tablodaki eski kayıtların Mh. eklerini de arayüzde temiz gösterelim
         df_db["Mahalle"] = df_db["Mahalle"].apply(clean_mahalle_name)
         st.dataframe(df_db.drop(columns=["id"]), use_container_width=True)
         
