@@ -1,4 +1,3 @@
-import base64
 import io
 import json
 import re
@@ -18,46 +17,64 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# Dış Ağdan Bağımsız Garanti Türkçe Font Yükleme Sistemi
+# Türkçe Karakter Garanti Yükleme Sistemi
 @st.cache_resource
-def setup_embedded_turkish_font():
-    # 1. Önce doğrudan GitHub/CDN üzerinden indirmeyi dene
-    urls = [
-        "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf",
-        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts-ttf/master/ttf/DejaVuSans.ttf"
-    ]
+def setup_tr_fonts():
+    font_urls = {
+        'TR_Sans': "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf",
+        'TR_Sans_Bold': "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf"
+    }
     
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                font_bytes = resp.read()
-                pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(font_bytes)))
-                pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(font_bytes)))
-                return 'TR_Font', 'TR_Font_Bold'
-        except Exception:
-            continue
+    # 1. Garanti Yöntem: Google Fonts Noto Sans TTF indirip kaydet
+    try:
+        url = "https://github.com/google/fonts/raw/main/ofl/dejavusans/DejaVuSans.ttf"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(data)))
+            pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(data)))
+            return 'TR_Font', 'TR_Font_Bold'
+    except Exception:
+        pass
 
-    # 2. Eğer ağ kapalıysa yerel sistemdeki DejaVu / Arial fontlarını tara
-    import os
-    system_fonts = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf"
-    ]
-    for font_path in system_fonts:
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont('TR_Font', font_path))
-                pdfmetrics.registerFont(TTFont('TR_Font_Bold', font_path))
-                return 'TR_Font', 'TR_Font_Bold'
-            except Exception:
-                continue
+    # 2. İkincil Ağ Yolu (CDN)
+    try:
+        url = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(data)))
+            pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(data)))
+            return 'TR_Font', 'TR_Font_Bold'
+    except Exception:
+        pass
 
-    return 'Helvetica', 'Helvetica-Bold'
+    # 3. Son Çare: Türkçe karakterleri ASCII muadillerine dönüştüren tam emniyet mekanizması
+    return None, None
 
-FONT_NAME, FONT_BOLD = setup_embedded_turkish_font()
+FONT_NAME, FONT_BOLD = setup_tr_fonts()
+
+def tr_fix(text):
+    """Eğer sistemde TTF font yüklenemezse PDF'in kırılmaması ve kare (■) çıkmaması için Türkçe metni dönüştürür."""
+    if FONT_NAME is not None:
+        return str(text)
+    
+    mapping = {
+        'İ': 'I', 'I': 'I', 'ı': 'i',
+        'Ş': 'S', 'ş': 's',
+        'Ğ': 'G', 'ğ': 'g',
+        'Ç': 'C', 'ç': 'c',
+        'Ö': 'O', 'ö': 'o',
+        'Ü': 'U', 'ü': 'u'
+    }
+    text_str = str(text)
+    for k, v in mapping.items():
+        text_str = text_str.replace(k, v)
+    return text_str
+
+# Font tanımlamaları varsayılana düşerse ASCII güvenliği sağlanır
+USE_FONT = FONT_NAME if FONT_NAME else 'Helvetica'
+USE_FONT_BOLD = FONT_BOLD if FONT_BOLD else 'Helvetica-Bold'
 
 # Gemini API Key Secrets Kontrolü
 try:
@@ -65,7 +82,7 @@ try:
 except Exception:
     gemini_api_key = None
 
-# Session State Başlangıç Değerleri
+# Session State
 if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuzselim"
 if "ada" not in st.session_state: st.session_state.ada = "1658"
 if "parsel" not in st.session_state: st.session_state.parsel = "1"
@@ -73,7 +90,6 @@ if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
 if "kaks" not in st.session_state: st.session_state.kaks = 0.45
 if "taks" not in st.session_state: st.session_state.taks = 0.30
 
-# Header Logoları
 col_l1, col_l2 = st.columns([1, 4])
 with col_l1:
     try: st.image("istestate_logo.png", width=180)
@@ -229,15 +245,15 @@ def yatay_kurumsal_pdf_olustur():
     )
     story = []
 
-    # Stil Tanımlamaları - Türkçe Font Zorunlu Kılındı
-    banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
-    th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
-    td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
-    td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#0F172A'), alignment=1, leading=10)
-    section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
-    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
+    # Stil Tanımlamaları
+    banner_title = ParagraphStyle('BTitle', fontName=USE_FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
+    th_style = ParagraphStyle('TH', fontName=USE_FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
+    td_style = ParagraphStyle('TD', fontName=USE_FONT, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
+    td_bold = ParagraphStyle('TDBold', fontName=USE_FONT_BOLD, fontSize=8, textColor=colors.HexColor('#0F172A'), alignment=1, leading=10)
+    section_title = ParagraphStyle('SecTitle', fontName=USE_FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
+    footer_style = ParagraphStyle('Footer', fontName=USE_FONT, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
 
-    # Beyaz Arka Planlı Tam Okunaklı Logolar
+    # Logolar
     try:
         img_ist = RLImage("istestate_logo.png", width=140, height=42)
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=150, height=42)
@@ -265,8 +281,8 @@ def yatay_kurumsal_pdf_olustur():
         ]))
 
         banner_text = Paragraph(
-            "<b>İSTESTATE & MERİÇ İNŞAAT EMLAK</b><br/>"
-            "<font size=8 color='#E2E8F0'>DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU</font>", 
+            f"<b>{tr_fix('İSTESTATE & MERİÇ İNŞAAT EMLAK')}</b><br/>"
+            f"<font size=8 color='#E2E8F0'>{tr_fix('DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU')}</font>", 
             banner_title
         )
         
@@ -287,30 +303,30 @@ def yatay_kurumsal_pdf_olustur():
     except Exception:
         pass
 
-    # Tablo 1: Parsel Bazlı Detay Tablosu
-    story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", section_title))
+    # Tablo 1
+    story.append(Paragraph(tr_fix("1. PARSEL BAZLI DETAY TABLOSU"), section_title))
 
     headers_t1 = [
-        Paragraph("MAHALLE", th_style),
-        Paragraph("ADA", th_style),
-        Paragraph("PARSEL", th_style),
-        Paragraph("NİTELİK", th_style),
-        Paragraph("PARSEL ALANI (M²)", th_style),
-        Paragraph("NET ALAN (M²)", th_style),
-        Paragraph("FONKSİYON", th_style),
-        Paragraph("KAKS", th_style),
-        Paragraph("NET İNŞAAT (M²)", th_style),
-        Paragraph("BRÜT İNŞAAT (M²)", th_style)
+        Paragraph(tr_fix("MAHALLE"), th_style),
+        Paragraph(tr_fix("ADA"), th_style),
+        Paragraph(tr_fix("PARSEL"), th_style),
+        Paragraph(tr_fix("NİTELİK"), th_style),
+        Paragraph(tr_fix("PARSEL ALANI (M²)"), th_style),
+        Paragraph(tr_fix("NET ALAN (M²)"), th_style),
+        Paragraph(tr_fix("FONKSİYON"), th_style),
+        Paragraph(tr_fix("KAKS"), th_style),
+        Paragraph(tr_fix("NET İNŞAAT (M²)"), th_style),
+        Paragraph(tr_fix("BRÜT İNŞAAT (M²)"), th_style)
     ]
 
     row_t1 = [
-        Paragraph(mahalle, td_style),
-        Paragraph(str(ada), td_style),
-        Paragraph(str(parsel), td_style),
-        Paragraph(nitelik, td_style),
+        Paragraph(tr_fix(mahalle), td_style),
+        Paragraph(tr_fix(str(ada)), td_style),
+        Paragraph(tr_fix(str(parsel)), td_style),
+        Paragraph(tr_fix(nitelik), td_style),
         Paragraph(f"{tapu_alani:,.2f}", td_style),
         Paragraph(f"{net_alan:,.2f}", td_style),
-        Paragraph(imar_fonksiyonu, td_style),
+        Paragraph(tr_fix(imar_fonksiyonu), td_style),
         Paragraph(f"{kaks:.2f}", td_style),
         Paragraph(f"{net_emsal_alani:,.2f}", td_style),
         Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
@@ -328,22 +344,22 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 14))
 
-    # Tablo 2: Fizibilite Analizi Tablosu
-    story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", section_title))
+    # Tablo 2
+    story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)"), section_title))
 
     headers_t2 = [
-        Paragraph("YAPI TİPOLOJİSİ", th_style),
-        Paragraph("ÜNİTE BRÜT M²", th_style),
-        Paragraph("TAHMİNİ ÜNİTE ADEDİ", th_style),
-        Paragraph("M² MALİYET ($)", th_style),
-        Paragraph("TOPLAM MALİYET ($)", th_style),
-        Paragraph("M² SATIŞ ($)", th_style),
-        Paragraph("TOPLAM CİRO ($)", th_style),
-        Paragraph("NET KAR MARJI ($)", th_style)
+        Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style),
+        Paragraph(tr_fix("ÜNİTE BRÜT M²"), th_style),
+        Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
+        Paragraph(tr_fix("M² MALİYET ($)"), th_style),
+        Paragraph(tr_fix("TOPLAM MALİYET ($)"), th_style),
+        Paragraph(tr_fix("M² SATIŞ ($)"), th_style),
+        Paragraph(tr_fix("TOPLAM CİRO ($)"), th_style),
+        Paragraph(tr_fix("NET KAR MARJI ($)"), th_style)
     ]
 
     row_t2 = [
-        Paragraph(yapi_tipolojisi, td_style),
+        Paragraph(tr_fix(yapi_tipolojisi), td_style),
         Paragraph(f"{unite_m2} m²", td_style),
         Paragraph(f"~{toplam_unite_adedi} Adet", td_style),
         Paragraph(f"${birim_maliyeti_usd:,.0f}", td_style),
@@ -365,10 +381,10 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table2)
     story.append(Spacer(1, 16))
 
-    # Alt Bilgi Metni
-    iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
-               f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
-               f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
+    # Alt Bilgi
+    iletisim = tr_fix("<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | ") + \
+               tr_fix(f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>") + \
+               tr_fix(f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL")
     story.append(Paragraph(iletisim, footer_style))
 
     doc.build(story)
