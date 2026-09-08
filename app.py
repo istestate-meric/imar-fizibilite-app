@@ -2,6 +2,7 @@ import io
 import json
 import re
 import urllib.request
+import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 import pdfplumber
@@ -24,28 +25,13 @@ st.set_page_config(
 # Custom CSS - Modern & Profesyonel Arayüz Tasarımı
 st.markdown("""
 <style>
-    /* Ana Arka Plan ve Genel Font İyileştirmeleri */
     .main {
         background-color: #0F172A;
     }
-    
-    /* Header Baner Tasarımı */
-    .header-card {
-        background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-    }
-    
-    /* Yan Panel (Sidebar) Şıklaştırma */
     section[data-testid="stSidebar"] {
         background-color: #1E293B !important;
         border-right: 1px solid #334155;
     }
-    
-    /* Metric Kartları (Özet Göstergeler) */
     div[data-testid="stMetricValue"] {
         font-size: 24px !important;
         font-weight: 700 !important;
@@ -58,8 +44,6 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    
-    /* Sekme Yapısı Modernizasyonu */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
     }
@@ -75,8 +59,6 @@ st.markdown("""
         color: #FFFFFF !important;
         border-color: #2563EB !important;
     }
-    
-    /* İndirme Butonu Stili */
     .stDownloadButton > button {
         width: 100%;
         background-color: #059669 !important;
@@ -93,6 +75,22 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# TCMB Canlı Dolar Kuru Çekme Fonksiyonu
+@st.cache_data(ttl=3600)
+def get_tcmb_usd_rate():
+    try:
+        url = "https://www.tcmb.gov.tr/kurlar/today.xml"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            tree = ET.parse(response)
+            root = tree.getroot()
+            for currency in root.findall('Currency'):
+                if currency.get('CurrencyCode') == 'USD':
+                    forex_buying = currency.find('ForexBuying').text
+                    return float(forex_buying)
+    except Exception:
+        return 34.50
 
 # Türkçe Karakter Garanti Yükleme Sistemi
 @st.cache_resource
@@ -111,7 +109,6 @@ def setup_tr_fonts():
                 return 'TR_Font', 'TR_Font_Bold'
         except Exception:
             continue
-
     return None, None
 
 FONT_NAME, FONT_BOLD = setup_tr_fonts()
@@ -145,15 +142,15 @@ if "parsel" not in st.session_state: st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
 if "kaks" not in st.session_state: st.session_state.kaks = 0.45
 if "taks" not in st.session_state: st.session_state.taks = 0.30
+if "auto_maliyet_usd" not in st.session_state: st.session_state.auto_maliyet_usd = 1200
+if "auto_satis_usd" not in st.session_state: st.session_state.auto_satis_usd = 5000
 
-# ÜST HEADER BANNER (Çift Logo & Kurumsal Başlık)
+# ÜST HEADER BANNER (Çift Logo & Başlık)
 col_header1, col_header2, col_header3 = st.columns([1.5, 4, 1.5])
 
 with col_header1:
-    try:
-        st.image("istestate_logo.png", use_container_width=True)
-    except Exception:
-        st.caption("istestate_logo.png yüklenemedi")
+    try: st.image("istestate_logo.png", use_container_width=True)
+    except Exception: st.caption("istestate_logo.png yüklenemedi")
 
 with col_header2:
     st.markdown("""
@@ -165,10 +162,8 @@ with col_header2:
     """, unsafe_allow_html=True)
 
 with col_header3:
-    try:
-        st.image("meric_insaat_emlak_logo.png", use_container_width=True)
-    except Exception:
-        st.caption("meric_insaat_emlak_logo.png yüklenemedi")
+    try: st.image("meric_insaat_emlak_logo.png", use_container_width=True)
+    except Exception: st.caption("meric_insaat_emlak_logo.png yüklenemedi")
 
 st.divider()
 
@@ -223,10 +218,8 @@ with st.sidebar:
     st.markdown("### 📍 2. Parsel & Bölge İmarı")
     mahalle = st.text_input("Mahalle", value=st.session_state.mahalle)
     col_a, col_p = st.columns(2)
-    with col_a:
-        ada = st.text_input("Ada No", value=st.session_state.ada)
-    with col_p:
-        parsel = st.text_input("Parsel No", value=st.session_state.parsel)
+    with col_a: ada = st.text_input("Ada No", value=st.session_state.ada)
+    with col_p: parsel = st.text_input("Parsel No", value=st.session_state.parsel)
     
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
@@ -236,17 +229,31 @@ with st.sidebar:
     terk_durumu = st.checkbox("18. Madde Terki Yapıldı mı?", value=False)
     
     col_k, col_t = st.columns(2)
-    with col_k:
-        kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
-    with col_t:
-        taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
+    with col_k: kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
+    with col_t: taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
     
     sunum_tipi = st.selectbox("Sunum Modeli", ["Satılık", "Kat Karşılığı"])
 
     st.markdown("---")
     st.markdown("### 💰 3. Finansal Parametreler ($ USD)")
-    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=1200, step=50)
-    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=5000, step=100)
+
+    if st.button("🔄 TCMB Kuruna Göre Fiyatları Güncelle"):
+        usd_rate = get_tcmb_usd_rate()
+        
+        # Tipoloji bazlı tahmini TL değerleri
+        if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"]:
+            maliyet_tl = 48000
+            satis_tl = 185000
+        else:
+            maliyet_tl = 38000
+            satis_tl = 140000
+
+        st.session_state.auto_maliyet_usd = int(maliyet_tl / usd_rate)
+        st.session_state.auto_satis_usd = int(satis_tl / usd_rate)
+        st.success(f"TCMB Dolar Kuru (1 USD = {usd_rate:.2f} TL) üzerinden güncellendi!")
+
+    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=st.session_state.auto_maliyet_usd, step=50)
+    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=st.session_state.auto_satis_usd, step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50) if sunum_tipi == "Kat Karşılığı" else 50
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
@@ -340,7 +347,6 @@ def yatay_kurumsal_pdf_olustur():
     section_title = ParagraphStyle('SecTitle', fontName=USE_FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=4)
     footer_style = ParagraphStyle('Footer', fontName=USE_FONT, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
 
-    # Header Logoları
     try:
         img_ist = RLImage("istestate_logo.png", width=140, height=42)
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=150, height=42)
