@@ -1,6 +1,7 @@
 import io
 import json
 import re
+import sqlite3
 import urllib.request
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -22,7 +23,57 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# ---------------------------------------------------------
+# SİSTEM HAFIZASI (SQLITE VERİ TABANI YÖNETİMİ)
+# ---------------------------------------------------------
+def init_db():
+    conn = sqlite3.connect("imar_hafizasi.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS imar_kayitlari (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mahalle TEXT,
+            ada TEXT,
+            parsel TEXT,
+            tapu_alani REAL,
+            kaks REAL,
+            taks REAL,
+            UNIQUE(mahalle, ada, parsel)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
+    conn = sqlite3.connect("imar_hafizasi.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, kaks, taks)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mahalle, ada, parsel) DO UPDATE SET
+            tapu_alani=excluded.tapu_alani,
+            kaks=excluded.kaks,
+            taks=excluded.taks
+    """, (str(mahalle).upper(), str(ada), str(parsel), float(tapu_alani), float(kaks), float(taks)))
+    conn.commit()
+    conn.close()
+
+def db_kayit_sorgula(mahalle, ada, parsel):
+    conn = sqlite3.connect("imar_hafizasi.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT tapu_alani, kaks, taks FROM imar_kayitlari 
+        WHERE upper(mahalle) = upper(?) AND ada = ? AND parsel = ?
+    """, (str(mahalle), str(ada), str(parsel)))
+    result = cursor.fetchone()
+    conn.close()
+    return result
+
+# ---------------------------------------------------------
+# CSS VE DİĞER YARDIMCI FONKSİYONLAR
+# ---------------------------------------------------------
 st.markdown("""
 <style>
     .main { background-color: #0F172A; }
@@ -35,7 +86,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# TCMB Canlı Dolar Kuru Çekme Fonksiyonu
 @st.cache_data(ttl=3600)
 def get_tcmb_usd_rate():
     try:
@@ -51,12 +101,11 @@ def get_tcmb_usd_rate():
     except Exception:
         return 34.50
 
-# Gemini API ile Canlı İnternet Arama / Fiyat Tahmin Fonksiyonu
 @st.cache_data(ttl=1800)
 def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-3.6-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
         prompt = f"""
         İstanbul Beykoz {mahalle_adi} mahallesi için güncel gayrimenkul piyasası koşullarında:
@@ -76,7 +125,6 @@ def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
         pass
     return None
 
-# Türkçe Karakter Yükleme Sistemi
 @st.cache_resource
 def setup_tr_fonts():
     urls = [
@@ -109,7 +157,6 @@ def tr_fix(text):
 USE_FONT = FONT_NAME if FONT_NAME else 'Helvetica'
 USE_FONT_BOLD = FONT_BOLD if FONT_BOLD else 'Helvetica-Bold'
 
-# Gemini API Key Kontrolü
 try:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -125,7 +172,7 @@ if "taks" not in st.session_state: st.session_state.taks = 0.30
 if "last_uploaded_filename" not in st.session_state: st.session_state.last_uploaded_filename = None
 if "last_searched_key" not in st.session_state: st.session_state.last_searched_key = None
 
-# ÜST HEADER BANNER
+# Header Banner
 col_header1, col_header2, col_header3 = st.columns([1.5, 4, 1.5])
 with col_header1:
     try: st.image("istestate_logo.png", use_container_width=True)
@@ -148,52 +195,65 @@ st.divider()
 
 # SOL PANEL (Girdiler)
 with st.sidebar:
-    st.markdown("### 📄 1. Belge Analizi (Otomatik)")
+    st.markdown("### 📄 1. Belge Analizi & Akıllı Hafıza")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
 
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
 
-    # AUTOMATIC PDF EXTRACTION
-    if uploaded_pdf is not None and gemini_api_key:
+    # AKILLI HAFIZA & OTOMATİK PDF İŞLEME AKIŞI
+    if uploaded_pdf is not None:
         if st.session_state.last_uploaded_filename != uploaded_pdf.name:
-            with st.spinner("PDF Otomatik Analiz Ediliyor..."):
+            with st.spinner("PDF ve Hafıza Sorgulanıyor..."):
                 try:
                     with pdfplumber.open(uploaded_pdf) as pdf:
                         extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
 
-                    genai.configure(api_key=gemini_api_key)
-                    model = genai.GenerativeModel('gemini-3.6-flash')
-                    
-                    prompt = f"""
-                    Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
-                    - mahalle (metin)
-                    - ada (metin)
-                    - parsel (metin)
-                    - tapu_alani (sayı)
-                    - kaks (sayı)
-                    - taks (sayı)
+                    # Gemini API Denemesi
+                    if gemini_api_key:
+                        genai.configure(api_key=gemini_api_key)
+                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        
+                        prompt = f"""
+                        Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
+                        - mahalle (metin)
+                        - ada (metin)
+                        - parsel (metin)
+                        - tapu_alani (sayı)
+                        - kaks (sayı)
+                        - taks (sayı)
 
-                    PDF Metni:
-                    {extracted_text[:4000]}
-                    """
-                    
-                    response = model.generate_content(prompt)
-                    clean_json = re.search(r'\{.*\}', response.text, re.DOTALL)
-                    
-                    if clean_json:
-                        data = json.loads(clean_json.group())
-                        st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle)).upper()
-                        st.session_state.ada = str(data.get("ada", st.session_state.ada))
-                        st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
-                        st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
-                        st.session_state.kaks = float(data.get("kaks", st.session_state.kaks))
-                        st.session_state.taks = float(data.get("taks", st.session_state.taks))
-                        st.session_state.last_uploaded_filename = uploaded_pdf.name
-                        st.toast("PDF Verileri Otomatik Aktarıldı!", icon="⚡")
-                        st.rerun()
+                        PDF Metni:
+                        {extracted_text[:4000]}
+                        """
+                        
+                        response = model.generate_content(prompt)
+                        clean_json = re.search(r'\{.*\}', response.text, re.DOTALL)
+                        
+                        if clean_json:
+                            data = json.loads(clean_json.group())
+                            st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle)).upper()
+                            st.session_state.ada = str(data.get("ada", st.session_state.ada))
+                            st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
+                            st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
+                            st.session_state.kaks = float(data.get("kaks", st.session_state.kaks))
+                            st.session_state.taks = float(data.get("taks", st.session_state.taks))
+                            
+                            # API veriyi okudu, VERİ TABANINA KAYDET/GÜNCELLE
+                            db_kayit_ekle_veya_guncelle(
+                                st.session_state.mahalle, st.session_state.ada, st.session_state.parsel,
+                                st.session_state.tapu_alani, st.session_state.kaks, st.session_state.taks
+                            )
+                            st.session_state.last_uploaded_filename = uploaded_pdf.name
+                            st.toast("PDF Okundu ve Sistem Hafızasına Kaydedildi!", icon="⚡")
+                            st.rerun()
+
                 except Exception as e:
-                    st.error(f"Hata: {e}")
+                    # Kota bittiyse (429 Hatası) uyarı verip düşüş mekanizmasını çalıştırır
+                    if "429" in str(e):
+                        st.warning("⚠️ API Kotası Doldu! Sistem Yerel Hafızayı/Veri Tabanını Kullanıyor.")
+                    else:
+                        st.error(f"PDF Okuma Hatası: {e}")
 
     st.markdown("---")
     st.markdown("### 📍 2. Parsel & Bölge İmarı")
@@ -201,11 +261,22 @@ with st.sidebar:
     col_a, col_p = st.columns(2)
     with col_a: ada = st.text_input("Ada No", value=st.session_state.ada)
     with col_p: parsel = st.text_input("Parsel No", value=st.session_state.parsel)
+
+    # HAFIZADAN SORGU BUTONU (Kota bittiğinde Ada/Parsel ile çağırmak için)
+    if st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True):
+        hafiza_veri = db_kayit_sorgula(mahalle, ada, parsel)
+        if hafiza_veri:
+            st.session_state.tapu_alani = hafiza_veri[0]
+            st.session_state.kaks = hafiza_veri[1]
+            st.session_state.taks = hafiza_veri[2]
+            st.success("✅ Veriler sistem hafızasından yüklendi!")
+            st.rerun()
+        else:
+            st.error("❌ Bu Ada/Parsel daha önce sistem hafızasına kaydedilmemiş.")
     
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
 
-    # HAVUZ SEÇENEĞİ (YENİ EKLENEN ÖZELLİK)
     st.markdown("#### 🏊 Havuz Proje Seçenekleri")
     havuz_tercihi = st.selectbox("Havuz Tipi", ["Havuzsuz", "Müstakil Havuzlu (Her Üniteye)", "Ortak Kullanım Havuzlu"])
     
@@ -223,12 +294,14 @@ with st.sidebar:
     with col_k: kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
     with col_t: taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
     
+    # Kullanıcı elle bir veriyi değiştirirse bunu da hafızaya günceller
+    db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks)
+
     sunum_tipi = st.selectbox("Sunum Modeli", ["Satılık", "Kat Karşılığı"])
 
     st.markdown("---")
     st.markdown("### 💰 3. Finansal Parametreler ($ USD)")
 
-    # AUTOMATIC MARKET PRICE FETCHING
     current_search_key = f"{mahalle}_{yapi_tipolojisi}"
     if st.session_state.last_searched_key != current_search_key:
         usd_rate = get_tcmb_usd_rate()
@@ -265,7 +338,6 @@ ilave_emsal_harici = net_emsal_alani * 0.30
 ham_toplam_brut_insaat = net_emsal_alani * 1.30
 max_taban_alani = net_alan * taks
 
-# HAVUZ ALANI VE DÜŞÜŞ HESAPLAMALARI
 gecici_unite_adedi = int(ham_toplam_brut_insaat / unite_m2) if unite_m2 > 0 else 0
 
 if havuz_tercihi == "Müstakil Havuzlu (Her Üniteye)":
@@ -275,12 +347,10 @@ elif havuz_tercihi == "Ortak Kullanım Havuzlu":
 else:
     toplam_havuz_alani = 0.0
 
-# Toplam inşaat alanından havuz m2 alanının düşülmesi
 toplam_brut_insaat = max(0.0, ham_toplam_brut_insaat - toplam_havuz_alani)
 toplam_unite_adedi = int(toplam_brut_insaat / unite_m2) if unite_m2 > 0 else 0
 
-# Finansal Hesaplamalar
-toplam_insaat_maliyeti_usd = ham_toplam_brut_insaat * birim_maliyeti_usd # Havuz imalat maliyeti dahildir
+toplam_insaat_maliyeti_usd = ham_toplam_brut_insaat * birim_maliyeti_usd
 toplam_proje_geliri_usd = toplam_brut_insaat * satis_m2_fiyati_usd
 
 if sunum_tipi == "Kat Karşılığı":
@@ -293,7 +363,7 @@ else:
     mutaahhit_net_kar_usd = toplam_proje_geliri_usd - toplam_insaat_maliyeti_usd
 
 # ANA SEKMELER
-tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Havuz Detayı", "💰 Finansal Fizibilite ($ USD)"])
+tab1, tab2, tab3, tab4 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Havuz Detayı", "💰 Finansal Fizibilite ($ USD)", "🗄️ Sistem Hafızası"])
 
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
@@ -336,7 +406,18 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# PDF Oluşturma Fonksiyonu
+# YENİ TAB: SİSTEM HAFIZASINI GÖRÜNTÜLEME
+with tab4:
+    st.markdown("#### 🗄️ Veri Tabanında Kayıtlı Tüm Parseller")
+    conn = sqlite3.connect("imar_hafizasi.db")
+    df_db = pd.read_sql_query("SELECT mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, tapu_alani AS 'Tapu Alanı', kaks AS KAKS, taks AS TAKS FROM imar_kayitlari", conn)
+    conn.close()
+    if not df_db.empty:
+        st.dataframe(df_db, use_container_width=True)
+    else:
+        st.info("Sistem hafızasında henüz kayıtlı veri bulunmuyor.")
+
+# PDF Oluşturma
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -402,7 +483,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 10))
 
-    # TABLO 2: MİMARİ POTANSİYEL VE HAVUZ SEÇENEĞİ
+    # TABLO 2: MİMARİ POTANSİYEL VE HAVUZ DETAYI
     story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE HAVUZ YAPILAŞMA DETAYI"), section_title))
     headers_t2 = [
         Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style), Paragraph(tr_fix("HAVUZ TİPİ VE ALANI"), th_style), Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style), Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
