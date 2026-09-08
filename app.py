@@ -37,7 +37,7 @@ st.markdown(
 )
 
 
-# --- 1. GELİŞTİRİLMİŞ OCR & PDF PARSER MODÜLÜ ---
+# --- 1. GELİŞTİRİLMİŞ BELEDİYE UYUMLU OCR & PDF PARSER MODÜLÜ ---
 def parse_imar_pdf(uploaded_file):
     text = ""
     with pdfplumber.open(uploaded_file) as pdf:
@@ -46,21 +46,43 @@ def parse_imar_pdf(uploaded_file):
             if t:
                 text += t + "\n"
 
-    # 1. Ada & Parsel Yakalama (Tablo ve Metin Formatları İçin Esnek Regex)
-    ada_match = re.search(r"Ada\s*[:\s|]+(\d+)", text, re.IGNORECASE)
-    parsel_match = re.search(r"Parsel\s*[:\s|]+(\d+)", text, re.IGNORECASE)
+    # --- 1. ADA & PARSEL AYRIŞTIRMA ---
+    ada_val = "-"
+    parsel_val = "-"
 
-    ada_val = ada_match.group(1) if ada_match else "-"
-    parsel_val = parsel_match.group(1) if parsel_match else "-"
+    # Yöntem A: Yan Yana / Tablo sütun yapısı (Örn: Ada 1617, Parsel 14 / 1617 | 14)
+    ada_match = re.search(
+        r"Ada\s*[:\s|]+(\d+)|Ada\s*\n\s*(\d+)", text, re.IGNORECASE
+    )
+    if ada_match:
+        ada_val = ada_match.group(1) or ada_match.group(2)
 
-    # Beykoz Belediyesi vb. Tablo Formatı Kontrolü (Ada ve Parsel Yan Yana/Alt Alta İse)
-    if ada_val == "-":
-        ada_parsel_alt_alta = re.search(r"(\d{3,5})\s*\|\s*(\d{1,4})", text)
-        if ada_parsel_alt_alta:
-            ada_val = ada_parsel_alt_alta.group(1)
-            parsel_val = ada_parsel_alt_alta.group(2)
+    parsel_match = re.search(
+        r"Parsel\s*[:\s|]+(\d+)|Parsel\s*\n\s*(\d+)", text, re.IGNORECASE
+    )
+    if parsel_match:
+        parsel_val = parsel_match.group(1) or parsel_match.group(2)
 
-    # 2. Arazi m² Yakalama (Binlik Ayraç ve Nokta/Virgül Temizliği)
+    # Yöntem B: Belediyenin Özel Tablosunda Alt Alta Yer Alma Durumu
+    if ada_val == "-" or parsel_val == "-":
+        # Tabloda "1617 14" veya "1617 | 14" arama
+        ada_parsel_pattern = re.search(r"(\d{3,5})\s*[\s|]\s*(\d{1,4})", text)
+        if ada_parsel_pattern:
+            if ada_val == "-":
+                ada_val = ada_parsel_pattern.group(1)
+            if parsel_val == "-":
+                parsel_val = ada_parsel_pattern.group(2)
+
+    # Dosya Adından YEDEK ÇEKME (Örn: "1617 Ada 14 Parsel.pdf")
+    if ada_val == "-" or parsel_val == "-":
+        filename_match = re.search(
+            r"(\d+)\s*Ada\s*(\d+)\s*Parsel", uploaded_file.name, re.IGNORECASE
+        )
+        if filename_match:
+            ada_val = filename_match.group(1)
+            parsel_val = filename_match.group(2)
+
+    # --- 2. ARAZİ M² AYRIŞTIRMA ---
     m2_val = 0.0
     m2_match = re.search(
         r"([\d\.,]+)\s*(m2|m²|Metrekare)", text, re.IGNORECASE
@@ -81,14 +103,29 @@ def parse_imar_pdf(uploaded_file):
         except ValueError:
             m2_val = 0.0
 
-    # 3. KAKS (Emsal) Yakalama
+    # --- 3. TAKS & KAKS (EMSAL) AYRIŞTIRMA ---
+    taks_val = 0.30
     kaks_val = 0.70
+
+    # TAKS Arama
+    taks_match = re.search(
+        r"Taks\s*[:\s|\n]*\s*(\d+[\.,]\d+)", text, re.IGNORECASE
+    )
+    if taks_match:
+        try:
+            taks_val = float(taks_match.group(1).replace(",", "."))
+        except ValueError:
+            taks_val = 0.30
+
+    # KAKS / Emsal Arama
     kaks_match = re.search(
-        r"(Emsal|KAKS)\s*[:\s|\(]*\s*(\d+[\.,]?\d*)", text, re.IGNORECASE
+        r"(Kaks|Emsal)\s*(\(Emsal\))?\s*[:\s|\n]*\s*(\d+[\.,]\d+)",
+        text,
+        re.IGNORECASE,
     )
     if kaks_match:
         try:
-            kaks_val = float(kaks_match.group(2).replace(",", "."))
+            kaks_val = float(kaks_match.group(3).replace(",", "."))
         except ValueError:
             kaks_val = 0.70
 
@@ -97,6 +134,7 @@ def parse_imar_pdf(uploaded_file):
         "ada": ada_val,
         "parsel": parsel_val,
         "m2": m2_val,
+        "taks": taks_val,
         "kaks": kaks_val,
         "ham_metin": text,
     }
@@ -132,6 +170,7 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
             "Terk Durumu": terk_durumu,
             "Net m²": round(net, 2),
             "Terk m²": round(terk, 2),
+            "TAKS": p["taks"],
             "KAKS": p["kaks"],
         })
 
@@ -346,6 +385,7 @@ if uploaded_files:
             "ada": ada,
             "parsel": parsel,
             "m2": m2,
+            "taks": parsed["taks"],
             "kaks": parsed["kaks"],
             "terk_durumu": terk_durumu,
         })
@@ -362,6 +402,7 @@ else:
         "ada": ada,
         "parsel": parsel,
         "m2": m2,
+        "taks": taks_input,
         "kaks": kaks_input,
         "terk_durumu": terk_durumu,
     })
