@@ -11,21 +11,16 @@ def clean_turkish_number(val_str):
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
-
-    # Sadece rakam, nokta ve virgülü tut
     val_str = re.sub(r"[^\d\.,]", "", val_str)
     if not val_str:
         return 0.0
 
-    # Format 1: 11,577.01 (Virgül binlik, nokta ondalık)
     if "," in val_str and "." in val_str:
         if val_str.find(",") < val_str.find("."):
             val_str = val_str.replace(",", "")
         else:
-            # Format 2: 11.577,01 (Nokta binlik, virgül ondalık)
             val_str = val_str.replace(".", "").replace(",", ".")
     elif "," in val_str:
-        # Sadece virgül varsa ondalıktır
         val_str = val_str.replace(",", ".")
 
     try:
@@ -37,6 +32,7 @@ def clean_turkish_number(val_str):
 def parse_imar_pdf_multi_zone(uploaded_file):
     full_text = ""
     pages_text = []
+    tables_data = []
 
     try:
         with pdfplumber.open(uploaded_file) as pdf:
@@ -44,35 +40,86 @@ def parse_imar_pdf_multi_zone(uploaded_file):
                 t = page.extract_text() or ""
                 pages_text.append(t)
                 full_text += t + "\n"
+
+                extracted_tables = page.extract_tables()
+                for tbl in extracted_tables:
+                    if tbl:
+                        tables_data.extend(tbl)
     except Exception as e:
         st.error(f"PDF okuma hatası ({uploaded_file.name}): {e}")
         return None
 
-    # --- 1. ADA & PARSEL YAKALAMA ---
+    # --- 1. ADA & PARSEL YAKALAMA (ÇOK KATMANLI DETEKSİYON) ---
     ada_val = "-"
     parsel_val = "-"
 
-    ada_m = re.search(r"Ada\s*[:\n\s|]+(\d+)", full_text, re.I)
-    if ada_m:
-        ada_val = ada_m.group(1)
+    # Yöntem A: Tablo Hücrelerinden Birebir Çekme (Beykoz PDF Yapısı)
+    for i, row in enumerate(tables_data):
+        row_cells = [str(c).strip() for c in row if c is not None]
+        row_str = " ".join(row_cells)
 
-    parsel_m = re.search(r"Parsel\s*[:\n\s|]+(\d+)", full_text, re.I)
-    if parsel_m:
-        parsel_val = parsel_m.group(1)
+        if "Ada" in row_str and ada_val == "-":
+            # Bir alt satırdaki veya aynı satırdaki ilk rakam kümesini al
+            nums = re.findall(r"\b\d+\b", row_str)
+            if nums:
+                ada_val = nums[0]
+            elif i + 1 < len(tables_data):
+                next_row_str = " ".join([
+                    str(c).strip() for c in tables_data[i + 1] if c is not None
+                ])
+                next_nums = re.findall(r"\b\d+\b", next_row_str)
+                if next_nums:
+                    ada_val = next_nums[0]
+
+        if "Parsel" in row_str and parsel_val == "-":
+            nums = re.findall(r"\b\d+\b", row_str)
+            if len(nums) > 1 and ada_val == nums[0]:
+                parsel_val = nums[1]
+            elif nums and ada_val != nums[0]:
+                parsel_val = nums[0]
+            elif i + 1 < len(tables_data):
+                next_row_str = " ".join([
+                    str(c).strip() for c in tables_data[i + 1] if c is not None
+                ])
+                next_nums = re.findall(r"\b\d+\b", next_row_str)
+                if next_nums:
+                    parsel_val = next_nums[-1]
+
+    # Yöntem B: Esnek Metin Regex (Satır Sonları ve Boşluk Toleranslı)
+    if ada_val == "-" or parsel_val == "-":
+        # ÇENGELDERE / 1437 / 17 bloğunu hedefler
+        block_m = re.search(
+            r"(?:ÇENGELDERE|GÖRELE|ÇİFTLİK|BAKLACI|YAVUZSELİM|FATİH)?[\s\n|]*(\d+)\b[\s\n|]*(\d+)\b",
+            full_text,
+            re.I,
+        )
+        if block_m:
+            if ada_val == "-":
+                ada_val = block_m.group(1)
+            if parsel_val == "-":
+                parsel_val = block_m.group(2)
+
+    # Yöntem C: Standart Regex Düşüşü
+    if ada_val == "-":
+        ada_m = re.search(r"Ada[\s\n|:]*(\d+)", full_text, re.I)
+        if ada_m:
+            ada_val = ada_m.group(1)
+
+    if parsel_val == "-":
+        parsel_m = re.search(r"Parsel[\s\n|:]*(\d+)", full_text, re.I)
+        if parsel_m:
+            parsel_val = parsel_m.group(1)
 
     # --- 2. GERÇEK ANA PARSEL ALANI (m²) YAKALAMA ---
-    # Raporun üst bilgisindeki "Alan *" hücresini doğrudan hedefler
     m2_val = 0.0
     main_area_m = re.search(
-        r"Alan\s*\*?\s*[:\n\s|]*([\d\.,]+)\s*m²", pages_text[0], re.I
+        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²", pages_text[0], re.I
     )
     if main_area_m:
         m2_val = clean_turkish_number(main_area_m.group(1))
 
     # --- 3. PARÇALI FONKSİYON DETAYLARI VE KAKS/TAKS ---
     fonksiyonlar = []
-
-    # "Fonksiyon Adı" başlıklarına göre bloğu böl
     raw_blocks = re.split(r"Fonksiyon Adı", full_text, flags=re.IGNORECASE)
 
     for block in raw_blocks[1:]:
@@ -83,25 +130,20 @@ def parse_imar_pdf_multi_zone(uploaded_file):
         ]
         f_adi = lines[0] if lines else "Genel Alan"
 
-        # Taks Regex
         taks = 0.0
-        taks_m = re.search(r"Taks\s*[:\s|]*([\d\.,]+)", block, re.I)
+        taks_m = re.search(r"Taks[\s\n|:]*([\d\.,]+)", block, re.I)
         if taks_m:
             taks = clean_turkish_number(taks_m.group(1))
 
-        # Kaks / Emsal Regex
         kaks = 0.0
         kaks_m = re.search(
-            r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?\s*[:\s|]*([\d\.,]+)", block, re.I
+            r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?[\s\n|:]*([\d\.,]+)", block, re.I
         )
         if kaks_m:
             kaks = clean_turkish_number(kaks_m.group(1))
 
-        # Fonksiyon m² Yakalama (Örn: %99.97 - 2,581.21 m² veya 407.57 m²)
         f_m2 = 0.0
-        m2_f_match = re.search(
-            r"(?:-\s*)?([\d\.,]+)\s*m²", block, re.I
-        )
+        m2_f_match = re.search(r"(?:-\s*)?([\d\.,]+)\s*m²", block, re.I)
         if m2_f_match:
             f_m2 = clean_turkish_number(m2_f_match.group(1))
 
