@@ -1,3 +1,15 @@
+import streamlit as st
+
+st.set_page_config(page_title="İmar & Fizibilite", layout="wide")
+
+# Ağır kütüphaneleri lazy-import ile yükleyerek Streamlit'in kilitlenmesini engelleyin
+try:
+    import pdfplumber
+    import re
+    import pandas as pd
+except Exception as e:
+    st.error(f"Kütüphane yüklenirken hata oluştu: {e}")
+
 def parse_imar_pdf_multi_zone(uploaded_file):
     full_text = ""
     tables_data = []
