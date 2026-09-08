@@ -13,6 +13,12 @@ from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer,
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
+# API Key'i Secrets veya Çevre Değişkeninden Otomatik Alma
+try:
+    gemini_api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    gemini_api_key = None
+
 # Session State Başlangıç Değerleri
 if "mahalle" not in st.session_state:
     st.session_state.mahalle = "Çengeldere"
@@ -36,7 +42,9 @@ st.divider()
 with st.sidebar:
     st.header("1. Belge ile Otomatik Analiz")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
-    gemini_api_key = st.text_input("Gemini API Key", type="password")
+
+    if not gemini_api_key:
+        gemini_api_key = st.text_input("Gemini API Key", type="password")
 
     # PDF Yüklendiğinde Otomatik Veri Çekme
     if uploaded_pdf is not None and gemini_api_key:
@@ -47,7 +55,6 @@ with st.sidebar:
                         extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
 
                     genai.configure(api_key=gemini_api_key)
-                    # Güncel model sürümü: gemini-3.6-flash
                     model = genai.GenerativeModel('gemini-3.6-flash')
                     
                     prompt = f"""
