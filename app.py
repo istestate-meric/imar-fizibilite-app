@@ -153,30 +153,29 @@ def db_kayit_sil(record_id):
         st.error(f"Kayıt silme hatası: {e}")
 
 
-def db_kayit_sorgula(mahalle, ada, parsel):
+def db_kayit_sorgula(ada, parsel):
+    """Sadece Ada ve Parsel üzerinden veritabanından eşleşen kaydı getirir."""
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
         cursor = conn.cursor()
 
-        sade_mahalle = clean_mahalle_name(mahalle).upper()
         ada_str = str(ada).strip()
         parsel_str = str(parsel).strip()
 
         cursor.execute(
             """
-            SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
-            WHERE UPPER(mahalle) = ?
-              AND CAST(ada AS TEXT) = ? 
+            SELECT mahalle, tapu_alani, kaks, taks FROM imar_kayitlari 
+            WHERE CAST(ada AS TEXT) = ? 
               AND CAST(parsel AS TEXT) = ?
         """,
-            (sade_mahalle, ada_str, parsel_str),
+            (ada_str, parsel_str),
         )
 
         result = cursor.fetchone()
         conn.close()
         return result
     except sqlite3.OperationalError as e:
-        st.error(f"Veritabanı Sorgu Hatası (OperationalError): {e}")
+        st.error(f"Veritabanı Sorgu Hatası: {e}")
         return None
     except Exception as e:
         st.error(f"Veritabanı Okuma Hatası: {e}")
@@ -433,6 +432,51 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📍 2. Bölge & Parsel Seçimi")
 
+    col_a, col_p = st.columns(2)
+    with col_a:
+        ada = st.text_input("Ada No", value=st.session_state.ada)
+    with col_p:
+        parsel = st.text_input("Parsel No", value=st.session_state.parsel)
+
+    # HAFIZADAN ADA VE PARSEL BAZLI SORGULAMA BUTONU
+    if st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True):
+        hafiza_veri = db_kayit_sorgula(ada, parsel)
+        if hafiza_veri:
+            kayitli_mahalle, kayitli_tapu, kayitli_kaks, kayitli_taks = hafiza_veri
+            sade_kayitli_mahalle = clean_mahalle_name(kayitli_mahalle)
+
+            # Mahalle verisinden ilgili Bölgeyi ve orijinal Mahalle adını tespit etme
+            bulunan_bolge = None
+            for bolge_adi, mahalleler in BOLGE_MAHALLE_HARITASI.items():
+                for m in mahalleler:
+                    if (
+                        clean_mahalle_name(m).upper()
+                        == sade_kayitli_mahalle.upper()
+                    ):
+                        bulunan_bolge = bolge_adi
+                        st.session_state.mahalle = m
+                        break
+                if bulunan_bolge:
+                    break
+
+            if bulunan_bolge:
+                st.session_state.bolge = bulunan_bolge
+            else:
+                st.session_state.mahalle = sade_kayitli_mahalle
+
+            st.session_state.tapu_alani = kayitli_tapu
+            st.session_state.kaks = kayitli_kaks
+            st.session_state.taks = kayitli_taks
+            st.session_state.ada = str(ada).strip()
+            st.session_state.parsel = str(parsel).strip()
+
+            st.success(
+                f"✅ Ada: {ada} / Parsel: {parsel} eşleşti! ({st.session_state.mahalle} Mahallesi yüklendi)"
+            )
+            st.rerun()
+        else:
+            st.error(f"❌ Ada: {ada} / Parsel: {parsel} için kayıt bulunamadı.")
+
     # Bölge Seçimi
     bolge_listesi = list(BOLGE_MAHALLE_HARITASI.keys())
     selected_bolge = st.selectbox(
@@ -441,7 +485,7 @@ with st.sidebar:
         index=(
             bolge_listesi.index(st.session_state.bolge)
             if st.session_state.bolge in bolge_listesi
-            else 2
+            else 0
         ),
     )
     st.session_state.bolge = selected_bolge
@@ -451,8 +495,10 @@ with st.sidebar:
 
     current_sade_mahalle = clean_mahalle_name(st.session_state.mahalle)
     selected_mahalle_index = 0
-    if current_sade_mahalle in bagli_mahalleler:
-        selected_mahalle_index = bagli_mahalleler.index(current_sade_mahalle)
+    for idx, m in enumerate(bagli_mahalleler):
+        if clean_mahalle_name(m).upper() == current_sade_mahalle.upper():
+            selected_mahalle_index = idx
+            break
 
     mahalle = st.selectbox(
         "Mahalle Seçin",
@@ -460,27 +506,6 @@ with st.sidebar:
         index=selected_mahalle_index,
     )
     st.session_state.mahalle = mahalle
-
-    col_a, col_p = st.columns(2)
-    with col_a:
-        ada = st.text_input("Ada No", value=st.session_state.ada)
-    with col_p:
-        parsel = st.text_input("Parsel No", value=st.session_state.parsel)
-
-    if st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True):
-        hafiza_veri = db_kayit_sorgula(mahalle, ada, parsel)
-        if hafiza_veri:
-            st.session_state.tapu_alani = hafiza_veri[0]
-            st.session_state.kaks = hafiza_veri[1]
-            st.session_state.taks = hafiza_veri[2]
-            st.session_state.ada = ada
-            st.session_state.parsel = parsel
-            st.success("✅ Veriler hafızadan başarıyla çekildi!")
-            st.rerun()
-        else:
-            st.error(
-                f"❌ {mahalle} - Ada: {ada} / Parsel: {parsel} için kayıt bulunamadı."
-            )
 
     imar_fonksiyonu = st.selectbox(
         "İmar Fonksiyon Alanı",
