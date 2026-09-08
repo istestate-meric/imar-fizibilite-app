@@ -9,15 +9,16 @@ st.set_page_config(
 )
 
 
-def clean_turkish_number(val_str):
+def parse_float_turk(val_str):
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
+    # Harf ve m² gibi birimleri temizle
     val_str = re.sub(r"[^\d\.,]", "", val_str)
     if not val_str:
         return 0.0
 
-    # Türkiye formatı: 2,131.58 m² veya 2.131,58 m²
+    # 2,131.58 veya 2.131,58 veya 2131.58 dönüştürme
     if "," in val_str and "." in val_str:
         if val_str.find(",") < val_str.find("."):
             val_str = val_str.replace(",", "")  # 2,131.58 -> 2131.58
@@ -36,70 +37,106 @@ def clean_turkish_number(val_str):
 
 def parse_imar_pdf_multi_zone(uploaded_file):
     full_text = ""
+    tables_text = ""
+
     try:
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
                 t = page.extract_text() or ""
                 full_text += t + "\n"
+
+                # Tabloları da string olarak topla
+                tables = page.extract_tables()
+                for tbl in tables:
+                    for row in tbl:
+                        if row:
+                            tables_text += (
+                                " ".join([str(c) for c in row if c]) + "\n"
+                            )
     except Exception as e:
         st.error(f"PDF okuma hatası ({uploaded_file.name}): {e}")
         return None
+
+    combined_text = full_text + "\n" + tables_text
 
     # --- 1. ADA & PARSEL YAKALAMA ---
     ada_val = "-"
     parsel_val = "-"
 
-    # Regex ile doğrudan Ada ve Parsel değerlerini çekme
-    ada_match = re.search(r"Ada[\s\n|:]*(\d+)", full_text, re.I)
-    parsel_match = re.search(r"Parsel[\s\n|:]*(\d+)", full_text, re.I)
+    ada_m = re.search(r"Ada[\s\n|:]*(\d+)", combined_text, re.I)
+    parsel_m = re.search(r"Parsel[\s\n|:]*(\d+)", combined_text, re.I)
 
-    if ada_match:
-        ada_val = ada_match.group(1)
-    if parsel_match:
-        parsel_val = parsel_match.group(1)
+    if ada_m:
+        ada_val = ada_m.group(1)
+    if parsel_m:
+        parsel_val = parsel_m.group(1)
 
-    # Dosya adından yedek yakalama (örneğin "1617 Ada 13 Parsel.pdf")
+    # Dosya adından fallback
     if ada_val == "-" or parsel_val == "-":
-        filename_m = re.search(
+        fn_m = re.search(
             r"(\d+)\s*Ada\s*(\d+)\s*Parsel", uploaded_file.name, re.I
         )
-        if filename_m:
-            ada_val = filename_m.group(1)
-            parsel_val = filename_m.group(2)
+        if fn_m:
+            ada_val, parsel_val = fn_m.group(1), fn_m.group(2)
 
-    # --- 2. GERÇEK ANA PARSEL ALANI (m²) YAKALAMA ---
+    # --- 2. BRÜT ARAZİ ALANI (m²) YAKALAMA ---
     m2_val = 0.0
-    # Alan * satırını yakalamak için esnek regex
-    main_area_m = re.search(
-        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²", full_text, re.I
-    )
-    if main_area_m:
-        m2_val = clean_turkish_number(main_area_m.group(1))
 
-    # --- 3. KAKS / TAKS YAKALAMA ---
+    # Deneme A: "Alan *" / "Alan" etiketinin hemen yanındaki/altındaki m²
+    area_patterns = [
+        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²",
+        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)",
+        r"([\d\.,]+)\s*m²[\s\n]*\*?\s*Grafik",
+    ]
+
+    for pat in area_patterns:
+        m = re.search(pat, combined_text, re.I)
+        if m:
+            parsed = parse_float_turk(m.group(1))
+            if parsed > 50:  # Makul bir arsa metrekaresi sınırı
+                m2_val = parsed
+                break
+
+    # Deneme B: Eğer regex bulamadıysa, metin içerisindeki 'm²' geçen tüm sayıları tara
+    if m2_val == 0.0:
+        all_m2_matches = re.findall(r"([\d\.,]+)\s*m²", combined_text, re.I)
+        candidates = []
+        for match in all_m2_matches:
+            val = parse_float_turk(match)
+            if 50 <= val <= 500000:  # Tipik parsel metrekare aralığı
+                candidates.append(val)
+        if candidates:
+            # Raporlarda en büyük m² genelde toplam tapu/grafik alanıdır
+            m2_val = max(candidates)
+
+    # --- 3. KAKS & TAKS YAKALAMA ---
     taks = 0.30
-    taks_m = re.search(r"Taks[\s\n|:]*([\d\.,]+)", full_text, re.I)
+    taks_m = re.search(r"Taks[\s\n|:]*([\d\.,]+)", combined_text, re.I)
     if taks_m:
-        taks = clean_turkish_number(taks_m.group(1))
+        v = parse_float_turk(taks_m.group(1))
+        if 0.05 <= v <= 0.90:
+            taks = v
 
     kaks = 0.30
     kaks_m = re.search(
-        r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?[\s\n|:]*([\d\.,]+)", full_text, re.I
+        r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?[\s\n|:]*([\d\.,]+)", combined_text, re.I
     )
     if kaks_m:
-        kaks = clean_turkish_number(kaks_m.group(1))
+        v = parse_float_turk(kaks_m.group(1))
+        if 0.05 <= v <= 3.0:
+            kaks = v
 
     return {
         "dosya_adi": uploaded_file.name,
         "ada": ada_val,
         "parsel": parsel_val,
         "m2": m2_val,
-        "taks": taks if taks > 0 else 0.30,
-        "kaks": kaks if kaks > 0 else 0.30,
+        "taks": taks,
+        "kaks": kaks,
     }
 
 
-# --- ARAYÜZ & ÖNBELLEK (SESSION STATE) ---
+# --- ARAYÜZ & ÖNBELLEK ---
 st.title("📌 İmar & Toplu Fizibilite Analiz Portalı")
 
 if "parsed_results" not in st.session_state:
@@ -232,3 +269,4 @@ else:
     st.info(
         "Lütfen sol taraftan PDF belgelerinizi seçip 'Dosyaları İşle' butonuna basınız."
     )
+    
