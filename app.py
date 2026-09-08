@@ -322,3 +322,160 @@ st.download_button(
     file_name="Konsolide_Imar_Fizibilite_Raporu.xlsx",
     mime="application/vnd.ms-excel",
 )
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import (
+    HRFlowable,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+
+
+def generate_pdf_katalog(sonuclar, proje_adi="İmar & Fizibilite Analizi"):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Özel Stiller
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1E3A8A'),
+        alignment=1,
+        spaceAfter=20,
+    )
+    subtitle_style = ParagraphStyle(
+        'SubTitleStyle',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#3B82F6'),
+        spaceBefore=12,
+        spaceAfter=6,
+    )
+    body_style = ParagraphStyle(
+        'BodyStyle', parent=styles['Normal'], fontSize=10, textColor=colors.navy
+    )
+
+    # 1. KAPAK SAYFASI
+    elements.append(Spacer(1, 40))
+    elements.append(Paragraph("GAYRİMENKUL DEĞERLEME &", title_style))
+    elements.append(
+        Paragraph("İMAR FİZİBİLİTE SUNUM KATALOĞU", title_style)[cite: 4]
+    )
+    elements.append(
+        HRFlowable(
+            width="100%",
+            thickness=3,
+            color=colors.HexColor("#1E3A8A"),
+            spaceAfter=30,
+        )
+    )
+    elements.append(
+        Paragraph(f"<b>Proje / Bölge:</b> {proje_adi}", body_style)[cite: 4]
+    )
+    elements.append(Spacer(1, 150))
+
+    # Özet Kutu
+    ozet_data = [
+        [
+            "Net Arazi m²",
+            f"{sonuclar['ozet_imar']['Toplam Net Arazi m²']} m²",
+        ],
+        [
+            "Toplam Brüt İnşaat m² (x1.3)",
+            f"{sonuclar['ozet_imar']['Satılabilir Toplam Brüt İnşaat m² (x1.3)']} m²",
+        ],
+        [
+            "Tahmini Konut Adedi",
+            f"{sonuclar['ozet_imar']['Tahmini Ünite / Konut Adedi']} Adet",
+        ],
+    ]
+    t_ozet = Table(ozet_data, colWidths=[200, 250])
+    t_ozet.setStyle(
+        TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('PADDING', (0, 0), (-1, -1), 10),
+        ])
+    )
+    elements.append(t_ozet)
+    elements.append(PageBreak())
+
+    # 2. İMAR VE PARSEL BİLGİLERİ
+    elements.append(
+        Paragraph("1. PARSEL VE İMAR DURUMU ANALİZİ", subtitle_style)
+    )
+    elements.append(
+        HRFlowable(
+            width="100%",
+            thickness=1,
+            color=colors.HexColor("#3B82F6"),
+            spaceAfter=15,
+        )
+    )
+
+    imar_table_data = [["Metrik", "Değer"]] + [
+        [k, str(v)] for k, v in sonuclar["ozet_imar"].items()
+    ]
+    t_imar = Table(imar_table_data, colWidths=[250, 200])
+    t_imar.setStyle(
+        TableStyle([
+            ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ])
+    )
+    elements.append(t_imar)
+    elements.append(Spacer(1, 20))
+
+    # 3. FİNANSAL FİZİBİLİTE SENARYOLARI
+    elements.append(
+        Paragraph("2. FİNANSAL FİZİBİLİTE & MODEL SENARYOLARI", subtitle_style)[
+            cite: 2
+        ]
+    )
+    elements.append(
+        HRFlowable(
+            width="100%",
+            thickness=1,
+            color=colors.HexColor("#3B82F6"),
+            spaceAfter=15,
+        )
+    )
+
+    for senaryo_adi, detaylar in sonuclar["finansal_senaryolar"].items():
+        elements.append(
+            Paragraph(f"<b>{senaryo_adi}</b>", styles["Heading3"])
+        )
+        s_data = [[k, str(v)] for k, v in detaylar.items()]
+        t_s = Table(s_data, colWidths=[250, 200])
+        t_s.setStyle(
+            TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
+                ('PADDING', (0, 0), (-1, -1), 5),
+            ])
+        )
+        elements.append(t_s)
+        elements.append(Spacer(1, 10))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
