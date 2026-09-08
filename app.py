@@ -3,6 +3,18 @@ import re
 import pandas as pd
 import pdfplumber
 import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import (
+    HRFlowable,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
@@ -27,7 +39,6 @@ st.markdown(
 
 # --- 1. OCR & PDF PARSER MODÜLÜ ---
 def parse_imar_pdf(uploaded_file):
-    """İmar Durumu PDF'inden temel verileri regex ile çeker."""
     text = ""
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
@@ -35,7 +46,6 @@ def parse_imar_pdf(uploaded_file):
             if t:
                 text += t + "\n"
 
-    # Alan ve Emsal Arama
     m2_match = re.search(
         r"(\d+[\.,]?\d*)\*?\s*(m2|m²|Metrekare)", text, re.IGNORECASE
     )
@@ -62,12 +72,11 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
     toplam_brut_arazi = 0
     toplam_net_arazi = 0
     toplam_terk = 0
-
     parsel_detaylari = []
 
     for p in parseller_listesi:
         m2 = p["m2"]
-        terk_durumu = p["terk_durumu"]  # 'Brüt' veya 'Net'
+        terk_durumu = p["terk_durumu"]
 
         if terk_durumu == "Brüt":
             net = m2 * 0.70
@@ -76,7 +85,7 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
         else:
             net = m2
             terk = 0.0
-            brut = m2 / 0.70  # Tahmini brüt hesabı
+            brut = m2 / 0.70
 
         toplam_brut_arazi += brut
         toplam_net_arazi += net
@@ -91,25 +100,21 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
             "KAKS": p["kaks"],
         })
 
-    # Tevhit Alanı İmar Hakları (Ağırlıklı KAKS veya Sabit Seçilen KAKS)
     sabit_kaks = finansal_parametreler["kaks"]
     emsal_dahil_insaat = toplam_net_arazi * sabit_kaks
-    toplam_brut_insaat = emsal_dahil_insaat * 1.30  # Plan Notu 1.3 Katsayısı
-    taban_oturumu = (
-        toplam_net_arazi * finansal_parametreler["taks"]
-    )  # TAKS Hesabı
+    toplam_brut_insaat = emsal_dahil_insaat * 1.30
+    taban_oturumu = toplam_net_arazi * finansal_parametreler["taks"]
 
     birim_konut_m2 = finansal_parametreler["birim_konut_m2"]
     tahmini_unite_sayisi = int(toplam_brut_insaat // birim_konut_m2)
 
-    # FINANSAL SENARYOLAR
     m2_maliyet = finansal_parametreler["m2_maliyet"]
     m2_satis = finansal_parametreler["m2_satis"]
 
     toplam_proje_maliyeti = toplam_brut_insaat * m2_maliyet
     toplam_proje_hasilati = toplam_brut_insaat * m2_satis
 
-    # Senaryo 1: Öz Sermaye (Kendi Yapımı)
+    # Senaryolar
     ozsermaye_kar = toplam_proje_hasilati - toplam_proje_maliyeti
     ozsermaye_roi = (
         (ozsermaye_kar / toplam_proje_maliyeti * 100)
@@ -117,7 +122,6 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
         else 0
     )
 
-    # Senaryo 2: Kat Karşılığı (% Kat Karşılığı Oranı)
     kat_orani_mutaahhit = finansal_parametreler["kat_kar_mutaahhit_payi"] / 100
     mutaahhit_insaat_payi = toplam_brut_insaat * kat_orani_mutaahhit
     mutaahhit_hasilati = mutaahhit_insaat_payi * m2_satis
@@ -126,7 +130,6 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
         (toplam_brut_insaat * (1 - kat_orani_mutaahhit)) // birim_konut_m2
     )
 
-    # Senaryo 3: Hasılat Paylaşımı (% Paylaşım Oranı)
     hasilat_orani_arsa = finansal_parametreler["hasilat_arsa_payi"] / 100
     arsa_sahibi_hasilat = toplam_proje_hasilati * hasilat_orani_arsa
     mutaahhit_hasilat_payi = toplam_proje_hasilati * (1 - hasilat_orani_arsa)
@@ -169,13 +172,98 @@ def hesapla_tevhit_ve_fizibilite(parseller_listesi, finansal_parametreler):
     }
 
 
-# --- 3. KULLANICI ARAYÜZÜ (STREAMLIT) ---
+# --- 3. KURUMSAL PDF OLUŞTURUCU ---
+def generate_pdf_katalog(sonuclar, proje_adi="İmar & Fizibilite Analizi"):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=22,
+        textColor=colors.HexColor('#1E3A8A'),
+        alignment=1,
+        spaceAfter=15,
+    )
+    subtitle_style = ParagraphStyle(
+        'SubTitleStyle',
+        parent=styles['Heading2'],
+        fontSize=13,
+        textColor=colors.HexColor('#3B82F6'),
+        spaceBefore=12,
+        spaceAfter=6,
+    )
+
+    elements.append(Spacer(1, 20))
+    elements.append(
+        Paragraph("GAYRİMENKUL İMAR & FİZİBİLİTE KATALOĞU", title_style)
+    )
+    elements.append(
+        HRFlowable(
+            width="100%",
+            thickness=2,
+            color=colors.HexColor("#1E3A8A"),
+            spaceAfter=20,
+        )
+    )
+
+    # İmar Tablosu
+    elements.append(Paragraph("1. İMAR DURUMU AÇIKLAMASI", subtitle_style))
+    imar_table_data = [["Metrik", "Değer"]] + [
+        [k, str(v)] for k, v in sonuclar["ozet_imar"].items()
+    ]
+    t_imar = Table(imar_table_data, colWidths=[250, 200])
+    t_imar.setStyle(
+        TableStyle([
+            ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ])
+    )
+    elements.append(t_imar)
+    elements.append(Spacer(1, 15))
+
+    # Finansal Senaryolar
+    elements.append(
+        Paragraph("2. FİNANSAL FİZİBİLİTE SENARYOLARI", subtitle_style)
+    )
+    for senaryo_adi, detaylar in sonuclar["finansal_senaryolar"].items():
+        elements.append(
+            Paragraph(f"<b>{senaryo_adi}</b>", styles["Heading3"])
+        )
+        s_data = [[k, str(v)] for k, v in detaylar.items()]
+        t_s = Table(s_data, colWidths=[250, 200])
+        t_s.setStyle(
+            TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
+                ('PADDING', (0, 0), (-1, -1), 5),
+            ])
+        )
+        elements.append(t_s)
+        elements.append(Spacer(1, 8))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
+# --- 4. ARAYÜZ & STREAMLIT AKIŞI ---
 st.markdown(
     '<div class="main-header">🏢 Gayrimenkul İmar, Tevhit & Fizibilite Paneli</div>',
     unsafe_allow_html=True,
 )
 
-# SIDEBAR: DOSYA YÜKLEME & PARAMETRELER
 st.sidebar.header("📁 1. Belge Yükleme (PDF)")
 uploaded_files = st.sidebar.file_uploader(
     "İmar Raporu PDF'lerini Yükleyin (Çoklu)",
@@ -200,11 +288,10 @@ st.sidebar.subheader("Model Paylaşım Oranları")
 kat_mutaahhit_payi = st.sidebar.slider("Kat Karşılığı Müteahhit Payı (%)", 30, 70, 50)
 hasilat_arsa_payi = st.sidebar.slider("Hasılat Paylaşımı Arsa Payı (%)", 30, 70, 45)
 
-# PARSEL BİLGİLERİ YÖNETİMİ
 parsel_listesi = []
 
 if uploaded_files:
-    st.info(f"📂 {len(uploaded_files)} Adet PDF Yüklendi. Veriler Ayrıştırılıyor...")
+    st.info(f"📂 {len(uploaded_files)} Adet PDF Yüklendi.")
     for idx, f in enumerate(uploaded_files):
         parsed = parse_imar_pdf(f)
         col1, col2, col3, col4 = st.columns([2, 2, 2, 3])
@@ -228,9 +315,6 @@ if uploaded_files:
             "terk_durumu": terk_durumu,
         })
 else:
-    st.warning(
-        "⚠️ PDF Yüklemediniz. Manuel Parsel Girişi Yapabilirsiniz (Örnek Parsel Eklendi):"
-    )
     col1, col2, col3, col4 = st.columns([2, 2, 2, 3])
     ada = col1.text_input("Ada", value="1437")
     parsel = col2.text_input("Parsel", value="17")
@@ -247,7 +331,6 @@ else:
         "terk_durumu": terk_durumu,
     })
 
-# HESAPLAMALARI ÇALIŞTIR
 finansal_params = {
     "kaks": kaks_input,
     "taks": taks_input,
@@ -260,7 +343,7 @@ finansal_params = {
 
 sonuclar = hesapla_tevhit_ve_fizibilite(parsel_listesi, finansal_params)
 
-# --- SONUÇLARIN GÖSTERİMİ ---
+# Gösterimler
 st.markdown("---")
 st.markdown(
     '<div class="sub-header">📊 1. Parsel & Tevhit İmar Özeti</div>',
@@ -268,13 +351,10 @@ st.markdown(
 )
 
 col_left, col_right = st.columns([1, 1])
-
 with col_left:
-    st.write("**Parsel Kırılımları**")
     st.dataframe(sonuclar["parsel_detaylari"], use_container_width=True)
 
 with col_right:
-    st.write("**Tevhit Sonrası Birleşik İmar Hakları**")
     df_imar = pd.DataFrame(
         list(sonuclar["ozet_imar"].items()), columns=["Metrik", "Değer"]
     )
@@ -282,200 +362,56 @@ with col_right:
 
 st.markdown("---")
 st.markdown(
-    '<div class="sub-header">💰 2. 3 Farklı Finansal Fizibilite Senaryosu</div>',
+    '<div class="sub-header">💰 2. Finansal Fizibilite Senaryoları</div>',
     unsafe_allow_html=True,
 )
 
 f1, f2, f3 = st.columns(3)
-
 with f1:
-    st.markdown("### 1. Öz Sermaye (Kendi Yapımı)")
+    st.markdown("### Öz Sermaye")
     for k, v in sonuclar["finansal_senaryolar"]["Senaryo 1: Öz Sermaye"].items():
         st.metric(k, v)
 
 with f2:
-    st.markdown("### 2. Kat Karşılığı Modeli")
+    st.markdown("### Kat Karşılığı")
     for k, v in sonuclar["finansal_senaryolar"][
         "Senaryo 2: Kat Karşılığı"
     ].items():
         st.metric(k, v)
 
 with f3:
-    st.markdown("### 3. Hasılat Paylaşımı Modeli")
+    st.markdown("### Hasılat Paylaşımı")
     for k, v in sonuclar["finansal_senaryolar"][
         "Senaryo 3: Hasılat Paylaşımı"
     ].items():
         st.metric(k, v)
 
-# EXCEL EXPORT
+# INDIRME BUTONLARI
 st.markdown("---")
-buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+col_btn1, col_btn2 = st.columns(2)
+
+# Excel İndirme
+buffer_excel = io.BytesIO()
+with pd.ExcelWriter(buffer_excel, engine="xlsxwriter") as writer:
     sonuclar["parsel_detaylari"].to_excel(
         writer, sheet_name="Parseller", index=False
     )
     df_imar.to_excel(writer, sheet_name="İmar Özet", index=False)
 
-st.download_button(
-    label="📥 Konsolide Excel Fizibilite Raporunu İndir",
-    data=buffer.getvalue(),
-    file_name="Konsolide_Imar_Fizibilite_Raporu.xlsx",
+col_btn1.download_button(
+    label="📥 Excel Fizibilite Raporu İndir",
+    data=buffer_excel.getvalue(),
+    file_name="Imar_Fizibilite_Raporu.xlsx",
     mime="application/vnd.ms-excel",
-)
-import io
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import (
-    HRFlowable,
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
+    use_container_width=True,
 )
 
-
-def generate_pdf_katalog(sonuclar, proje_adi="İmar & Fizibilite Analizi"):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30,
-    )
-    elements = []
-    styles = getSampleStyleSheet()
-
-    # Özel Stiller
-    title_style = ParagraphStyle(
-        'TitleStyle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        textColor=colors.HexColor('#1E3A8A'),
-        alignment=1,
-        spaceAfter=20,
-    )
-    subtitle_style = ParagraphStyle(
-        'SubTitleStyle',
-        parent=styles['Heading2'],
-        fontSize=14,
-        textColor=colors.HexColor('#3B82F6'),
-        spaceBefore=12,
-        spaceAfter=6,
-    )
-    body_style = ParagraphStyle(
-        'BodyStyle', parent=styles['Normal'], fontSize=10, textColor=colors.navy
-    )
-
-    # 1. KAPAK SAYFASI
-    elements.append(Spacer(1, 40))
-    elements.append(Paragraph("GAYRİMENKUL DEĞERLEME &", title_style))
-    elements.append(
-        Paragraph("İMAR FİZİBİLİTE SUNUM KATALOĞU", title_style)[cite: 4]
-    )
-    elements.append(
-        HRFlowable(
-            width="100%",
-            thickness=3,
-            color=colors.HexColor("#1E3A8A"),
-            spaceAfter=30,
-        )
-    )
-    elements.append(
-        Paragraph(f"<b>Proje / Bölge:</b> {proje_adi}", body_style)[cite: 4]
-    )
-    elements.append(Spacer(1, 150))
-
-    # Özet Kutu
-    ozet_data = [
-        [
-            "Net Arazi m²",
-            f"{sonuclar['ozet_imar']['Toplam Net Arazi m²']} m²",
-        ],
-        [
-            "Toplam Brüt İnşaat m² (x1.3)",
-            f"{sonuclar['ozet_imar']['Satılabilir Toplam Brüt İnşaat m² (x1.3)']} m²",
-        ],
-        [
-            "Tahmini Konut Adedi",
-            f"{sonuclar['ozet_imar']['Tahmini Ünite / Konut Adedi']} Adet",
-        ],
-    ]
-    t_ozet = Table(ozet_data, colWidths=[200, 250])
-    t_ozet.setStyle(
-        TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-            ('PADDING', (0, 0), (-1, -1), 10),
-        ])
-    )
-    elements.append(t_ozet)
-    elements.append(PageBreak())
-
-    # 2. İMAR VE PARSEL BİLGİLERİ
-    elements.append(
-        Paragraph("1. PARSEL VE İMAR DURUMU ANALİZİ", subtitle_style)
-    )
-    elements.append(
-        HRFlowable(
-            width="100%",
-            thickness=1,
-            color=colors.HexColor("#3B82F6"),
-            spaceAfter=15,
-        )
-    )
-
-    imar_table_data = [["Metrik", "Değer"]] + [
-        [k, str(v)] for k, v in sonuclar["ozet_imar"].items()
-    ]
-    t_imar = Table(imar_table_data, colWidths=[250, 200])
-    t_imar.setStyle(
-        TableStyle([
-            ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#1E3A8A')),
-            ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-        ])
-    )
-    elements.append(t_imar)
-    elements.append(Spacer(1, 20))
-
-    # 3. FİNANSAL FİZİBİLİTE SENARYOLARI
-    elements.append(
-        Paragraph("2. FİNANSAL FİZİBİLİTE & MODEL SENARYOLARI", subtitle_style)[
-            cite: 2
-        ]
-    )
-    elements.append(
-        HRFlowable(
-            width="100%",
-            thickness=1,
-            color=colors.HexColor("#3B82F6"),
-            spaceAfter=15,
-        )
-    )
-
-    for senaryo_adi, detaylar in sonuclar["finansal_senaryolar"].items():
-        elements.append(
-            Paragraph(f"<b>{senaryo_adi}</b>", styles["Heading3"])
-        )
-        s_data = [[k, str(v)] for k, v in detaylar.items()]
-        t_s = Table(s_data, colWidths=[250, 200])
-        t_s.setStyle(
-            TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
-                ('PADDING', (0, 0), (-1, -1), 5),
-            ])
-        )
-        elements.append(t_s)
-        elements.append(Spacer(1, 10))
-
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
+# PDF İndirme
+pdf_buffer = generate_pdf_katalog(sonuclar)
+col_btn2.download_button(
+    label="📄 Kurumsal PDF Kataloğunu İndir",
+    data=pdf_buffer,
+    file_name="Imar_Fizibilite_Sunumu.pdf",
+    mime="application/pdf",
+    use_container_width=True,
+)
