@@ -15,7 +15,84 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 # Sayfa Yapılandırması
-st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
+st.set_page_config(
+    page_title="İstestate Meriç - İmar & Fizibilite Portalı", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS - Modern & Profesyonel Arayüz Tasarımı
+st.markdown("""
+<style>
+    /* Ana Arka Plan ve Genel Font İyileştirmeleri */
+    .main {
+        background-color: #0F172A;
+    }
+    
+    /* Header Baner Tasarımı */
+    .header-card {
+        background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    
+    /* Yan Panel (Sidebar) Şıklaştırma */
+    section[data-testid="stSidebar"] {
+        background-color: #1E293B !important;
+        border-right: 1px solid #334155;
+    }
+    
+    /* Metric Kartları (Özet Göstergeler) */
+    div[data-testid="stMetricValue"] {
+        font-size: 24px !important;
+        font-weight: 700 !important;
+        color: #38BDF8 !important;
+    }
+    div[data-testid="stMetric"] {
+        background-color: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    /* Sekme Yapısı Modernizasyonu */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #1E293B;
+        border-radius: 8px 8px 0px 0px;
+        padding: 10px 20px;
+        color: #94A3B8;
+        border: 1px solid #334155;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #2563EB !important;
+        color: #FFFFFF !important;
+        border-color: #2563EB !important;
+    }
+    
+    /* İndirme Butonu Stili */
+    .stDownloadButton > button {
+        width: 100%;
+        background-color: #059669 !important;
+        color: white !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+        padding: 12px 24px !important;
+        border: none !important;
+        transition: all 0.3s ease;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #10B981 !important;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Türkçe Karakter Garanti Yükleme Sistemi
 @st.cache_resource
@@ -55,40 +132,56 @@ def tr_fix(text):
 USE_FONT = FONT_NAME if FONT_NAME else 'Helvetica'
 USE_FONT_BOLD = FONT_BOLD if FONT_BOLD else 'Helvetica-Bold'
 
-# Gemini API Key Controls
+# Gemini API Key Kontrolü
 try:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
     gemini_api_key = None
 
-if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuzselim"
+# Session State Tanımları
+if "mahalle" not in st.session_state: st.session_state.mahalle = "YAVUZSELİM"
 if "ada" not in st.session_state: st.session_state.ada = "1658"
 if "parsel" not in st.session_state: st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
 if "kaks" not in st.session_state: st.session_state.kaks = 0.45
 if "taks" not in st.session_state: st.session_state.taks = 0.30
 
-# Header Logoları
-col_l1, col_l2 = st.columns([1, 4])
-with col_l1:
-    try: st.image("istestate_logo.png", width=180)
-    except Exception: pass
-with col_l2:
-    st.title("İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK & MERİÇ İNŞAAT EMLAK")
-    st.subheader("Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli")
+# ÜST HEADER BANNER (Çift Logo & Kurumsal Başlık)
+col_header1, col_header2, col_header3 = st.columns([1.5, 4, 1.5])
+
+with col_header1:
+    try:
+        st.image("istestate_logo.png", use_container_width=True)
+    except Exception:
+        st.caption("istestate_logo.png yüklenemedi")
+
+with col_header2:
+    st.markdown("""
+    <div style="text-align: center; padding-top: 5px;">
+        <h2 style="color: #FFFFFF; font-weight: 800; margin-bottom: 0px; font-size: 26px;">İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK</h2>
+        <h3 style="color: #38BDF8; font-weight: 600; margin-top: 0px; font-size: 20px;">& MERİÇ İNŞAAT EMLAK</h3>
+        <p style="color: #94A3B8; font-size: 14px; margin-top: 5px;">Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_header3:
+    try:
+        st.image("meric_insaat_emlak_logo.png", use_container_width=True)
+    except Exception:
+        st.caption("meric_insaat_emlak_logo.png yüklenemedi")
 
 st.divider()
 
-# Sol Panel (Girdiler)
+# SOL PANEL (Girdiler)
 with st.sidebar:
-    st.header("1. Belge ile Otomatik Analiz")
+    st.markdown("### 📄 1. Belge ile Otomatik Analiz")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
 
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
 
     if uploaded_pdf is not None and gemini_api_key:
-        if st.button("PDF Verilerini Forma Aktar"):
+        if st.button("⚡ PDF Verilerini Forma Aktar"):
             with st.spinner("PDF Analiz Ediliyor..."):
                 try:
                     with pdfplumber.open(uploaded_pdf) as pdf:
@@ -115,21 +208,25 @@ with st.sidebar:
                     
                     if clean_json:
                         data = json.loads(clean_json.group())
-                        st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle))
+                        st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle)).upper()
                         st.session_state.ada = str(data.get("ada", st.session_state.ada))
                         st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
                         st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
                         st.session_state.kaks = float(data.get("kaks", st.session_state.kaks))
                         st.session_state.taks = float(data.get("taks", st.session_state.taks))
-                        st.success("Bilgiler PDF'ten başarıyla aktarıldı!")
+                        st.success("Bilgiler aktarıldı!")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"Hata Oluştu: {e}")
+                    st.error(f"Hata: {e}")
 
-    st.header("2. Parsel & Bölge İmar Fonksiyonu")
+    st.markdown("---")
+    st.markdown("### 📍 2. Parsel & Bölge İmarı")
     mahalle = st.text_input("Mahalle", value=st.session_state.mahalle)
-    ada = st.text_input("Ada No", value=st.session_state.ada)
-    parsel = st.text_input("Parsel No", value=st.session_state.parsel)
+    col_a, col_p = st.columns(2)
+    with col_a:
+        ada = st.text_input("Ada No", value=st.session_state.ada)
+    with col_p:
+        parsel = st.text_input("Parsel No", value=st.session_state.parsel)
     
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
@@ -138,17 +235,22 @@ with st.sidebar:
     nitelik = st.selectbox("Nitelik", ["Bahçe", "Arsa", "Tarla"])
     terk_durumu = st.checkbox("18. Madde Terki Yapıldı mı?", value=False)
     
-    kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
-    taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
+    col_k, col_t = st.columns(2)
+    with col_k:
+        kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
+    with col_t:
+        taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
+    
     sunum_tipi = st.selectbox("Sunum Modeli", ["Satılık", "Kat Karşılığı"])
 
-    st.header("3. Finansal Parametreler ($ USD)")
+    st.markdown("---")
+    st.markdown("### 💰 3. Finansal Parametreler ($ USD)")
     birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=1200, step=50)
     satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=5000, step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50) if sunum_tipi == "Kat Karşılığı" else 50
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
-# Hesaplamalar
+# Hesaplama Mantığı
 if terk_durumu or nitelik.lower() == 'arsa':
     net_alan = tapu_alani
     kesinti_orani = 0.0
@@ -176,7 +278,7 @@ if sunum_tipi == "Kat Karşılığı":
 else:
     mutaahhit_net_kar_usd = toplam_proje_geliri_usd - toplam_insaat_maliyeti_usd
 
-# Arayüz Sekmeleri
+# ANA SEKMELER
 tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Tipoloji", "💰 Finansal Fizibilite ($ USD)"])
 
 with tab1:
@@ -186,7 +288,8 @@ with tab1:
     c3.metric("Net Emsal Alanı", f"{net_emsal_alani:,.2f} m²")
     c4.metric("TOPLAM BRÜT İNŞAAT", f"{toplam_brut_insaat:,.2f} m²")
 
-    st.markdown("#### İmar Parametre Detayları")
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 📋 İmar Parametre Detayları")
     df_imar = pd.DataFrame({
         "Parametre": ["İmar Fonksiyonu", "Yapı Tipolojisi", "Terk/DOP Durumu", "Uygulanan KAKS (Emsal)", "TAKS (Taban Alanı Katsayısı)", "Max Taban Alanı", "%30 İlave Emsal Harici"],
         "Değer": [imar_fonksiyonu, yapi_tipolojisi, terk_str, f"{kaks:.2f}", f"{taks:.2f}", f"{max_taban_alani:,.2f} m²", f"{ilave_emsal_harici:,.2f} m²"]
@@ -196,16 +299,20 @@ with tab1:
 with tab2:
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        st.markdown(f"#### Bölgesel Mimari Yapı Planlaması ({imar_fonksiyonu})")
-        st.write(f"* **Tercih Edilen Tipoloji:** {yapi_tipolojisi}")
-        st.write(f"* **Ortalama Ünite Büyüklüğü:** {unite_m2} m²")
-        st.write(f"* **Tahmini Bağımsız Bölüm Sayısı:** ~{toplam_unite_adedi} Adet")
-        st.write(f"* **Taban Oturumu (TAKS Sınırı):** ~{max_taban_alani:,.2f} m²")
+        st.markdown(f"#### 🏛️ Bölgesel Mimari Planlama ({imar_fonksiyonu})")
+        st.info(f"""
+        * **Tercih Edilen Tipoloji:** {yapi_tipolojisi}
+        * **Ortalama Ünite Büyüklüğü:** {unite_m2} m²
+        * **Tahmini Bağımsız Bölüm Sayısı:** ~{toplam_unite_adedi} Adet
+        * **Taban Oturumu (TAKS Sınırı):** ~{max_taban_alani:,.2f} m²
+        """)
     with col_m2:
         if sunum_tipi == "Kat Karşılığı":
-            st.markdown(f"#### Kat Karşılığı Paylaşım Modeli (%{kat_karsiligi_orani} Arsa / %{100-kat_karsiligi_orani} Müteahhit)")
-            st.write(f"* **Arsa Sahibi Kalan Brüt İnşaat:** {arsa_sahibi_payi_m2:,.2f} m² (~{arsa_sahibi_unite_adedi} Ünite)")
-            st.write(f"* **Müteahhit Kalan Brüt İnşaat:** {mutaahhit_payi_m2:,.2f} m² (~{mutaahhit_unite_adedi} Ünite)")
+            st.markdown(f"#### 🤝 Kat Karşılığı Paylaşım Modeli (%{kat_karsiligi_orani} Arsa / %{100-kat_karsiligi_orani} Müteahhit)")
+            st.success(f"""
+            * **Arsa Sahibi Kalan Brüt İnşaat:** {arsa_sahibi_payi_m2:,.2f} m² (~{arsa_sahibi_unite_adedi} Ünite)
+            * **Müteahhit Kalan Brüt İnşaat:** {mutaahhit_payi_m2:,.2f} m² (~{mutaahhit_unite_adedi} Ünite)
+            """)
 
 with tab3:
     f1, f2, f3 = st.columns(3)
@@ -226,7 +333,6 @@ def yatay_kurumsal_pdf_olustur():
     )
     story = []
 
-    # Stiller
     banner_title = ParagraphStyle('BTitle', fontName=USE_FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
     th_style = ParagraphStyle('TH', fontName=USE_FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
     td_style = ParagraphStyle('TD', fontName=USE_FONT, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
@@ -246,8 +352,6 @@ def yatay_kurumsal_pdf_olustur():
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('TOPPADDING', (0,0), (-1,-1), 3),
             ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-            ('LEFTPADDING', (0,0), (-1,-1), 3),
-            ('RIGHTPADDING', (0,0), (-1,-1), 3),
         ]))
 
         box_mer = Table([[img_mer]], colWidths=[156])
@@ -257,8 +361,6 @@ def yatay_kurumsal_pdf_olustur():
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('TOPPADDING', (0,0), (-1,-1), 3),
             ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-            ('LEFTPADDING', (0,0), (-1,-1), 3),
-            ('RIGHTPADDING', (0,0), (-1,-1), 3),
         ]))
 
         banner_text = Paragraph(
@@ -276,15 +378,13 @@ def yatay_kurumsal_pdf_olustur():
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('TOPPADDING', (0,0), (-1,-1), 5),
             ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ('RIGHTPADDING', (0,0), (-1,-1), 6),
         ]))
         story.append(banner_table)
         story.append(Spacer(1, 10))
     except Exception:
         pass
 
-    # TABLO 1: PARSEL BAZLI DETAY TABLOSU
+    # TABLO 1: İMAR VE KAPASİTE
     story.append(Paragraph(tr_fix("1. PARSEL BAZLI İMAR VE KAPASİTE TABLOSU"), section_title))
     headers_t1 = [
         Paragraph(tr_fix("MAHALLE"), th_style),
@@ -322,7 +422,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 10))
 
-    # TABLO 2: MİMARİ POTANSİYEL ANALİZİ
+    # TABLO 2: MİMARİ POTANSİYEL
     story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE YAPILAŞMA ANALİZİ"), section_title))
     headers_t2 = [
         Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style),
@@ -352,7 +452,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table2)
     story.append(Spacer(1, 10))
 
-    # TABLO 3: FİNANSAL FİZİBİLİTE ANALİZİ
+    # TABLO 3: FİNANSAL FİZİBİLİTE
     story.append(Paragraph(tr_fix("3. FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)"), section_title))
     headers_t3 = [
         Paragraph(tr_fix("M² İNŞAAT MALİYETİ ($)"), th_style),
@@ -380,7 +480,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table3)
     story.append(Spacer(1, 10))
 
-    # TABLO 4: KAT KARŞILIĞI PAYLAŞIM MODELİ (Seçeneğe Bağlı)
+    # TABLO 4: KAT KARŞILIĞI (Opsiyonel)
     if sunum_tipi == "Kat Karşılığı":
         story.append(Paragraph(tr_fix(f"4. KAT KARŞILIĞI PAYLAŞIM DETAYLARI (%{kat_karsiligi_orani} ARSA / %{100-kat_karsiligi_orani} MÜTEAHHİT)"), section_title))
         headers_t4 = [
