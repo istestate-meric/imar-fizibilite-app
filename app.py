@@ -1,272 +1,133 @@
-import io
 import pandas as pd
-import pdfplumber
-import re
-import streamlit as st
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-st.set_page_config(
-    page_title="İmar & Toplu Fizibilite Analiz Portalı", layout="wide"
-)
+class GayrimenkulOtomasyonu:
+    def __init__(self, mahalle, ada, parsel, tapu_alani, nitelik, terk_yapildi_mi, kaks, taks, sunum_tipi):
+        self.mahalle = mahalle
+        self.ada = ada
+        self.parsel = parsel
+        self.tapu_alani = float(tapu_alani)
+        self.nitelik = nitelik
+        self.terk_yapildi_mi = terk_yapildi_mi  # True: Terk Yapılmış (Arsa), False: Terk Yapılmamış (Bahçe)
+        self.kaks = float(kaks)
+        self.taks = float(taks)
+        self.sunum_tipi = sunum_tipi  # "Kat Karşılığı" veya "Satılık"
+        
+        self.hesapla()
 
-
-def parse_float_turk(val_str):
-    if not val_str:
-        return 0.0
-    val_str = str(val_str).strip()
-    # Harf ve m² gibi birimleri temizle
-    val_str = re.sub(r"[^\d\.,]", "", val_str)
-    if not val_str:
-        return 0.0
-
-    # 2,131.58 veya 2.131,58 veya 2131.58 dönüştürme
-    if "," in val_str and "." in val_str:
-        if val_str.find(",") < val_str.find("."):
-            val_str = val_str.replace(",", "")  # 2,131.58 -> 2131.58
+    def hesapla(self):
+        # Terk durumuna göre kesinti ve alan hesaplama
+        if self.terk_yapildi_mi or self.nitelik.lower() == 'arsa':
+            self.terk_durumu_str = "18. Madde Uygulanmış (Terk Yapılmış)"
+            self.kesinti_orani = 0.00
+            self.net_alan = self.tapu_alani
         else:
-            val_str = val_str.replace(".", "").replace(
-                ",", "."
-            )  # 2.131,58 -> 2131.58
-    elif "," in val_str:
-        val_str = val_str.replace(",", ".")
+            self.terk_durumu_str = "18. Madde Dışında (Terk Yapılmamış)"
+            self.kesinti_orani = 0.30
+            self.net_alan = self.tapu_alani * 0.70
 
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0.0
+        self.net_emsal_alani = self.net_alan * self.kaks
+        self.ilave_alan = self.net_emsal_alani * 0.30
+        self.toplam_brut_insaat = self.net_emsal_alani * 1.30
+        self.max_taban_alani = self.net_alan * self.taks
 
+    def pdf_rapor_olustur(self, dosya_adi="Imar_Analiz_Raporu.pdf"):
+        doc = SimpleDocTemplate(dosya_adi, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        story = []
+        styles = getSampleStyleSheet()
 
-def parse_imar_pdf_multi_zone(uploaded_file):
-    full_text = ""
-    tables_text = ""
-
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text() or ""
-                full_text += t + "\n"
-
-                # Tabloları da string olarak topla
-                tables = page.extract_tables()
-                for tbl in tables:
-                    for row in tbl:
-                        if row:
-                            tables_text += (
-                                " ".join([str(c) for c in row if c]) + "\n"
-                            )
-    except Exception as e:
-        st.error(f"PDF okuma hatası ({uploaded_file.name}): {e}")
-        return None
-
-    combined_text = full_text + "\n" + tables_text
-
-    # --- 1. ADA & PARSEL YAKALAMA ---
-    ada_val = "-"
-    parsel_val = "-"
-
-    ada_m = re.search(r"Ada[\s\n|:]*(\d+)", combined_text, re.I)
-    parsel_m = re.search(r"Parsel[\s\n|:]*(\d+)", combined_text, re.I)
-
-    if ada_m:
-        ada_val = ada_m.group(1)
-    if parsel_m:
-        parsel_val = parsel_m.group(1)
-
-    # Dosya adından fallback
-    if ada_val == "-" or parsel_val == "-":
-        fn_m = re.search(
-            r"(\d+)\s*Ada\s*(\d+)\s*Parsel", uploaded_file.name, re.I
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            textColor=colors.HexColor('#1A2B4C'),
+            alignment=1,
+            spaceAfter=10
         )
-        if fn_m:
-            ada_val, parsel_val = fn_m.group(1), fn_m.group(2)
-
-    # --- 2. BRÜT ARAZİ ALANI (m²) YAKALAMA ---
-    m2_val = 0.0
-
-    # Deneme A: "Alan *" / "Alan" etiketinin hemen yanındaki/altındaki m²
-    area_patterns = [
-        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)\s*m²",
-        r"Alan\s*\*?[\s\n|:]*([\d\.,]+)",
-        r"([\d\.,]+)\s*m²[\s\n]*\*?\s*Grafik",
-    ]
-
-    for pat in area_patterns:
-        m = re.search(pat, combined_text, re.I)
-        if m:
-            parsed = parse_float_turk(m.group(1))
-            if parsed > 50:  # Makul bir arsa metrekaresi sınırı
-                m2_val = parsed
-                break
-
-    # Deneme B: Eğer regex bulamadıysa, metin içerisindeki 'm²' geçen tüm sayıları tara
-    if m2_val == 0.0:
-        all_m2_matches = re.findall(r"([\d\.,]+)\s*m²", combined_text, re.I)
-        candidates = []
-        for match in all_m2_matches:
-            val = parse_float_turk(match)
-            if 50 <= val <= 500000:  # Tipik parsel metrekare aralığı
-                candidates.append(val)
-        if candidates:
-            # Raporlarda en büyük m² genelde toplam tapu/grafik alanıdır
-            m2_val = max(candidates)
-
-    # --- 3. KAKS & TAKS YAKALAMA ---
-    taks = 0.30
-    taks_m = re.search(r"Taks[\s\n|:]*([\d\.,]+)", combined_text, re.I)
-    if taks_m:
-        v = parse_float_turk(taks_m.group(1))
-        if 0.05 <= v <= 0.90:
-            taks = v
-
-    kaks = 0.30
-    kaks_m = re.search(
-        r"(?:Kaks|Emsal)\s*(?:\(Emsal\))?[\s\n|:]*([\d\.,]+)", combined_text, re.I
-    )
-    if kaks_m:
-        v = parse_float_turk(kaks_m.group(1))
-        if 0.05 <= v <= 3.0:
-            kaks = v
-
-    return {
-        "dosya_adi": uploaded_file.name,
-        "ada": ada_val,
-        "parsel": parsel_val,
-        "m2": m2_val,
-        "taks": taks,
-        "kaks": kaks,
-    }
-
-
-# --- ARAYÜZ & ÖNBELLEK ---
-st.title("📌 İmar & Toplu Fizibilite Analiz Portalı")
-
-if "parsed_results" not in st.session_state:
-    st.session_state.parsed_results = []
-
-with st.sidebar:
-    st.header("📂 Toplu Belge Yükleme")
-    uploaded_files = st.file_uploader(
-        "İmar Raporu PDF'lerini Yükleyin (Çoklu Seçim)",
-        type=["pdf"],
-        accept_multiple_files=True,
-    )
-
-    if st.button("🔄 Dosyaları İşle"):
-        if uploaded_files:
-            results = []
-            for pdf_file in uploaded_files:
-                parsed_data = parse_imar_pdf_multi_zone(pdf_file)
-                if parsed_data:
-                    results.append(parsed_data)
-            st.session_state.parsed_results = results
-
-    st.header("⚙️ İmar & Terk Parametreleri")
-    override_kaks = st.checkbox("Tevhit/Özel KAKS Kullan (PDF'leri Ez)")
-    custom_kaks = st.number_input(
-        "Birleşik KAKS", min_value=0.0, max_value=3.0, value=0.70, step=0.05
-    )
-    terk_orani = (
-        st.number_input(
-            "Kamusal Terk Oranı (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=30.0,
-            step=1.0,
+        
+        subtitle_style = ParagraphStyle(
+            'SubTitleStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.HexColor('#555555'),
+            alignment=1,
+            spaceAfter=15
         )
-        / 100.0
-    )
 
-    st.header("💰 Finansal & Paylaşım Oranları")
-    mutaahhit_payi = (
-        st.number_input(
-            "Müteahhit Payı (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=50.0,
-            step=5.0,
-        )
-        / 100.0
-    )
-    insaat_maliyeti_m2 = st.number_input(
-        "İnşaat M² Maliyeti ($)", min_value=0, value=800, step=50
-    )
-    satis_fiyati_m2 = st.number_input(
-        "Satış M² Fiyatı ($)", min_value=0, value=2500, step=100
-    )
+        # Kurumsal Başlık
+        story.append(Paragraph("<b>1st ESTATE - MERİÇ GAYRİMENKUL DANIŞMANLIK</b>", title_style))
+        story.append(Paragraph(f"<b>İMAR EMSAL & ANALİZ RAPORU ({self.sunum_tipi.upper()})</b>", subtitle_style))
+        story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1A2B4C'), spaceAfter=15))
 
-# --- TABLO VE HESAPLAMALAR ---
-if st.session_state.parsed_results:
-    table_rows = []
-    for data in st.session_state.parsed_results:
-        gross_m2 = data["m2"]
-        kaks_to_use = custom_kaks if override_kaks else data["kaks"]
+        # Taşınmaz Bilgileri Tablosu
+        data_tasinmaz = [
+            ["Mahalle / İlçe", f"{self.mahalle} / Beykoz", "Nitelik", self.nitelik],
+            ["Ada / Parsel", f"{self.ada} / {self.parsel}", "18. Madde / Terk Durumu", self.terk_durumu_str],
+            ["Tapu Alanı", f"{self.tapu_alani:,.2f} m²", "Sunum Modeli", self.sunum_tipi]
+        ]
+        
+        t1 = Table(data_tasinmaz, colWidths=[110, 160, 130, 140])
+        t1.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8F9FA')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CCCCCC')),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 9),
+            ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#333333')),
+            ('PADDING', (0,0), (-1,-1), 6),
+        ]))
+        story.append(t1)
+        story.append(Spacer(1, 15))
 
-        terk_m2 = gross_m2 * terk_orani
-        net_m2 = gross_m2 - terk_m2
+        # İmar ve Hesaplama Sonuçları Tablosu
+        data_hesap = [
+            ["Girdi / Hesap Kalemi", "Değer / Ölçü"],
+            ["Hesaba Esas Net Alan", f"{self.net_alan:,.2f} m² (%{int((1-self.kesinti_orani)*100)} esas)"],
+            ["Uygulanan Emsal (KAKS)", f"{self.kaks:.2f}"],
+            ["Net Emsal İnşaat Alanı", f"{self.net_emsal_alani:,.2f} m²"],
+            ["%30 İlave Alan (Emsal Harici)", f"{self.ilave_alan:,.2f} m²"],
+            ["TOPLAM BRÜT İNŞAAT ALANI", f"{self.toplam_brut_insaat:,.2f} m²"],
+            ["Max Taban Alanı (TAKS - 0.30)", f"{self.max_taban_alani:,.2f} m²"]
+        ]
 
-        emsal_insaat_m2 = net_m2 * kaks_to_use
-        toplam_brut_insaat_m2 = emsal_insaat_m2 * 1.30
-        zemin_oturumu_m2 = net_m2 * data["taks"]
+        t2 = Table(data_hesap, colWidths=[270, 270])
+        t2.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (1,0), colors.HexColor('#1A2B4C')),
+            ('TEXTCOLOR', (0,0), (1,0), colors.white),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CCCCCC')),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+            ('FONTNAME', (0,5), (1,5), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,5), (1,5), colors.HexColor('#E2E8F0')),
+            ('FONTSIZE', (0,0), (-1,-1), 9),
+            ('PADDING', (0,0), (-1,-1), 6),
+        ]))
+        story.append(t2)
+        story.append(Spacer(1, 15))
 
-        mutaahhit_brut_m2 = toplam_brut_insaat_m2 * mutaahhit_payi
-        arsa_sahibi_brut_m2 = toplam_brut_insaat_m2 * (1 - mutaahhit_payi)
-        toplam_maliyet = toplam_brut_insaat_m2 * insaat_maliyeti_m2
-        mutaahhit_ciro = mutaahhit_brut_m2 * satis_fiyati_m2
-        mutaahhit_kar = mutaahhit_ciro - toplam_maliyet
+        # Sunum Tipine Göre Süreç Akışı
+        if self.sunum_tipi == "Kat Karşılığı":
+            surec = "Süreç Akışı: Arsa Analizi ➔ Projelendirme ➔ Sözleşme ➔ Ruhsat ➔ İnşaat ➔ Teslim"
+        else:
+            surec = "Süreç Akışı: Arsa Analizi ➔ Terk İşlemi ➔ Projelendirme ➔ Ruhsat ➔ İnşaat ➔ İskan"
+            
+        story.append(Paragraph(f"<b>{surec}</b>", styles['Normal']))
+        story.append(Spacer(1, 15))
 
-        table_rows.append({
-            "Dosya": data["dosya_adi"],
-            "Ada/Parsel": f"{data['ada']}/{data['parsel']}",
-            "Girdi Brüt m²": gross_m2,
-            "Net m²": net_m2,
-            "Terk m²": terk_m2,
-            "TAKS": data["taks"],
-            "KAKS": kaks_to_use,
-            "Emsal İnşaat m²": emsal_insaat_m2,
-            "Satılabilir Toplam İnşaat m² (x1.3)": toplam_brut_insaat_m2,
-            "Zemin Oturumu m²": zemin_oturumu_m2,
-            "Müteahhit İnşaat m²": mutaahhit_brut_m2,
-            "Arsa Sahibi İnşaat m²": arsa_sahibi_brut_m2,
-            "Toplam İnşaat Maliyeti ($)": toplam_maliyet,
-            "Müteahhit Ciro ($)": mutaahhit_ciro,
-            "Müteahhit Tahmini Kar ($)": mutaahhit_kar,
-        })
+        # İletişim Bilgileri (Kurumsal Altbilgi)
+        iletisim_text = "<b>Gayrimenkul Danışmanı:</b> Umutcan K. MERİÇ (0539 451 61 61) | Süleyman MERİÇ (0532 695 10 83)<br/>" \
+                        "<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
+        story.append(Paragraph(iletisim_text, styles['Normal']))
 
-    df_results = pd.DataFrame(table_rows)
+        doc.build(story)
+        print(f"Rapor oluşturuldu: {dosya_adi}")
 
-    st.subheader("📊 Toplu İmar ve Finansal Analiz Tablosu")
-    st.dataframe(df_results, use_container_width=True)
+# Örnek Kullanım:
+# Terk Yapılmamış Bahçe Niteliğinde Parsel (Müteahhit Sunumu)
+p1 = GayrimenkulOtomasyonu("Yavuzselim", "1647", "10", 6398.86, "Bahçe", terk_yapildi_mi=False, kaks=0.40, taks=0.30, sunum_tipi="Kat Karşılığı")
+p1.pdf_rapor_olustur("Yavuzselim_1647_10_Rapor.pdf")
 
-    st.subheader("📈 Toplam Bölgesel Özet Fizibilite")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(
-        "Toplam Brüt Arazi", f"{df_results['Girdi Brüt m²'].sum():,.2f} m²"
-    )
-    c2.metric(
-        "Satılabilir Toplam İnşaat",
-        f"{df_results['Satılabilir Toplam İnşaat m² (x1.3)'].sum():,.2f} m²",
-    )
-    c3.metric(
-        "Toplam Maliyet",
-        f"${df_results['Toplam İnşaat Maliyeti ($)'].sum():,.2f}",
-    )
-    c4.metric(
-        "Müteahhit Toplam Kar",
-        f"${df_results['Müteahhit Tahmini Kar ($)'].sum():,.2f}",
-    )
-
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_results.to_excel(writer, sheet_name="Fizibilite Raporu", index=False)
-    excel_data = output.getvalue()
-
-    st.download_button(
-        label="📥 Sonuçları Excel Olarak İndir",
-        data=excel_data,
-        file_name="imar_fizibilite_raporu.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-else:
-    st.info(
-        "Lütfen sol taraftan PDF belgelerinizi seçip 'Dosyaları İşle' butonuna basınız."
-    )
-    
+# Terk Yapılmış Arsa Niteliğinde Parsel (Satılık Müşteri Sunumu)
+p2 = GayrimenkulOtomasyonu("Fatih", "40", "70", 1372.10, "Arsa", terk_yapildi_mi=True, kaks=0.40, taks=0.30, sunum_tipi="Satılık")
+p2.pdf_rapor_olustur("Fatih_40_70_Rapor.pdf")
