@@ -17,54 +17,60 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# Türkçe Karakter Destekli Font Kayıt Sistemi
+# Türkçe Karakter Destekli Font Sistemi (Kesin Çözüm)
 @st.cache_resource
-def register_turkish_fonts():
-    font_url = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf"
-    font_bold_url = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Bold.ttf"
+def setup_tr_fonts():
+    # Alternatif font kaynakları (CDN engellerine karşı yedekli)
+    fonts = {
+        'Regular': [
+            "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf",
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/arial/Arial.ttf"
+        ],
+        'Bold': [
+            "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans-Bold.ttf",
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/arial/Arial-Bold.ttf"
+        ]
+    }
     
-    try:
-        req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            pdfmetrics.registerFont(TTFont('TR_Roboto', io.BytesIO(response.read())))
-            
-        req_bold = urllib.request.Request(font_bold_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req_bold) as response:
-            pdfmetrics.registerFont(TTFont('TR_Roboto_Bold', io.BytesIO(response.read())))
-            
-        return 'TR_Roboto', 'TR_Roboto_Bold'
-    except Exception:
-        return 'Helvetica', 'Helvetica-Bold'
+    font_name = "Helvetica"
+    font_bold = "Helvetica-Bold"
 
-FONT_NAME, FONT_BOLD = register_turkish_fonts()
+    for name, urls in fonts.items():
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = resp.read()
+                    f_name = f'TR_Font_{name}'
+                    pdfmetrics.registerFont(TTFont(f_name, io.BytesIO(data)))
+                    if name == 'Regular': font_name = f_name
+                    else: font_bold = f_name
+                    break
+            except Exception:
+                continue
 
-# Gemini API Key Secrets Kontrolü
+    return font_name, font_bold
+
+FONT_NAME, FONT_BOLD = setup_tr_fonts()
+
+# Gemini API Key Controls
 try:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
     gemini_api_key = None
 
-# Session State Başlangıç Değerleri
-if "mahalle" not in st.session_state:
-    st.session_state.mahalle = "Yavuzselim"
-if "ada" not in st.session_state:
-    st.session_state.ada = "1658"
-if "parsel" not in st.session_state:
-    st.session_state.parsel = "1"
-if "tapu_alani" not in st.session_state:
-    st.session_state.tapu_alani = 6721.92
-if "kaks" not in st.session_state:
-    st.session_state.kaks = 0.45
-if "taks" not in st.session_state:
-    st.session_state.taks = 0.30
+if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuzselim"
+if "ada" not in st.session_state: st.session_state.ada = "1658"
+if "parsel" not in st.session_state: st.session_state.parsel = "1"
+if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
+if "kaks" not in st.session_state: st.session_state.kaks = 0.45
+if "taks" not in st.session_state: st.session_state.taks = 0.30
 
 # Header Logoları
 col_l1, col_l2 = st.columns([1, 4])
 with col_l1:
-    try:
-        st.image("istestate_logo.png", width=180)
-    except Exception:
-        pass
+    try: st.image("istestate_logo.png", width=180)
+    except Exception: pass
 with col_l2:
     st.title("İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK & MERİÇ İNŞAAT EMLAK")
     st.subheader("Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli")
@@ -123,15 +129,8 @@ with st.sidebar:
     ada = st.text_input("Ada No", value=st.session_state.ada)
     parsel = st.text_input("Parsel No", value=st.session_state.parsel)
     
-    imar_fonksiyonu = st.selectbox(
-        "İmar Fonksiyon Alanı",
-        ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"]
-    )
-    
-    yapi_tipolojisi = st.selectbox(
-        "Mimari Yapı Tipolojisi Tercihi",
-        ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"]
-    )
+    imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
+    yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
 
     tapu_alani = st.number_input("Tapu Alanı (m²)", value=float(st.session_state.tapu_alani), step=10.0)
     nitelik = st.selectbox("Nitelik", ["Bahçe", "Arsa", "Tarla"])
@@ -147,7 +146,7 @@ with st.sidebar:
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50)
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
-# Hesaplama Mantığı
+# Hesaplamalar
 if terk_durumu or nitelik.lower() == 'arsa':
     net_alan = tapu_alani
     kesinti_orani = 0.0
@@ -173,7 +172,7 @@ if sunum_tipi == "Kat Karşılığı":
 else:
     mutaahhit_net_kar_usd = toplam_proje_geliri_usd - toplam_insaat_maliyeti_usd
 
-# Ekran Sekmeleri
+# Arayüz Sekmeleri
 tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Tipoloji", "💰 Finansal Fizibilite ($ USD)"])
 
 with tab1:
@@ -210,7 +209,7 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# Türkçe Karakter Garantili PDF Üretme Metodu
+# PDF Oluşturma Fonksiyonu
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -223,7 +222,7 @@ def yatay_kurumsal_pdf_olustur():
     )
     story = []
 
-    # Bütün Stillerde Türkçe Karakter Fontu Zorunlu Kılınmıştır
+    # Stiller
     banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
     th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
     td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
@@ -231,18 +230,41 @@ def yatay_kurumsal_pdf_olustur():
     section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
     footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
 
-    # Logolar ve Banner Alanı
+    # Beyaz Arka Planlı Logo Alanı
     try:
-        img_ist = RLImage("istestate_logo.png", width=150, height=48)
-        img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=48)
+        img_ist = RLImage("istestate_logo.png", width=140, height=42)
+        img_mer = RLImage("meric_insaat_emlak_logo.png", width=150, height=42)
         
+        # Logoları Beyaz Kutu İçine Alma
+        box_ist = Table([[img_ist]], colWidths=[146])
+        box_ist.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ('LEFTPADDING', (0,0), (-1,-1), 3),
+            ('RIGHTPADDING', (0,0), (-1,-1), 3),
+        ]))
+
+        box_mer = Table([[img_mer]], colWidths=[156])
+        box_mer.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ('LEFTPADDING', (0,0), (-1,-1), 3),
+            ('RIGHTPADDING', (0,0), (-1,-1), 3),
+        ]))
+
         banner_text = Paragraph(
             "<b>İSTESTATE & MERİÇ İNŞAAT EMLAK</b><br/>"
             "<font size=8 color='#E2E8F0'>DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU</font>", 
             banner_title
         )
         
-        banner_table = Table([[img_ist, banner_text, img_mer]], colWidths=[160, 482, 160])
+        banner_table = Table([[box_ist, banner_text, box_mer]], colWidths=[156, 490, 156])
         banner_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1B2A47')),
             ('ALIGN', (0,0), (0,0), 'LEFT'),
@@ -251,15 +273,15 @@ def yatay_kurumsal_pdf_olustur():
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('TOPPADDING', (0,0), (-1,-1), 6),
             ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('LEFTPADDING', (0,0), (-1,-1), 8),
-            ('RIGHTPADDING', (0,0), (-1,-1), 8),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('RIGHTPADDING', (0,0), (-1,-1), 6),
         ]))
         story.append(banner_table)
         story.append(Spacer(1, 14))
     except Exception:
         pass
 
-    # Tablo 1: Parsel Bazlı Detay Tablosu
+    # Tablo 1
     story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", section_title))
 
     headers_t1 = [
@@ -300,7 +322,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 14))
 
-    # Tablo 2: Mimari Potansiyel & Finansal Fizibilite Tablosu
+    # Tablo 2
     story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", section_title))
 
     headers_t2 = [
@@ -337,7 +359,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table2)
     story.append(Spacer(1, 16))
 
-    # Alt Bilgi Metni
+    # Alt Bilgi
     iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
                f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
                f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
@@ -347,7 +369,6 @@ def yatay_kurumsal_pdf_olustur():
     buffer.seek(0)
     return buffer
 
-# Kurumsal Dosya Adı Yapısı
 clean_mahalle = re.sub(r'[^\w\s-]', '', mahalle).strip().replace(" ", "_")
 kurumsal_dosya_adi = f"ISTESTATE_MERIC_Fizibilite_Raporu_{clean_mahalle}_{ada}_{parsel}_2026.pdf"
 
