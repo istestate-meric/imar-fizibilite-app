@@ -1,18 +1,41 @@
 import io
 import json
 import re
+import urllib.request
 import pandas as pd
 import streamlit as st
 import pdfplumber
 import google.generativeai as genai
-from PIL import Image
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import HRFlowable, Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
+
+# ReportLab Türkçe Font Kaydı (DejaVuSans Otomatik Yükleme)
+@st.cache_resource
+def register_fonts():
+    try:
+        # Fontu internet üzerinden indirip sisteme kaydediyoruz
+        font_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+        font_bold_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf"
+        
+        urllib.request.urlretrieve(font_url, "DejaVuSans.ttf")
+        urllib.request.urlretrieve(font_bold_url, "DejaVuSans-Bold.ttf")
+        
+        pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
+        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', 'DejaVuSans-Bold.ttf'))
+        return True
+    except Exception as e:
+        return False
+
+fonts_loaded = register_fonts()
+FONT_NAME = 'DejaVuSans' if fonts_loaded else 'Helvetica'
+FONT_BOLD = 'DejaVuSans-Bold' if fonts_loaded else 'Helvetica-Bold'
 
 # API Key Secrets kontrolü
 try:
@@ -20,34 +43,21 @@ try:
 except Exception:
     gemini_api_key = None
 
-# Türkçe Karakter Düzeltici (PDF Çıktısı İçin)
-def tr_fix(text):
-    if not isinstance(text, str):
-        return text
-    replacements = {
-        'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
-        'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S',
-        'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
-    }
-    for search, replace in replacements.items():
-        text = text.replace(search, replace)
-    return text
-
 # Session State Başlangıç Değerleri
 if "mahalle" not in st.session_state:
     st.session_state.mahalle = "Yavuzselim"
 if "ada" not in st.session_state:
-    st.session_state.ada = "1658"
+    st.session_state.ada = "1647"
 if "parsel" not in st.session_state:
-    st.session_state.parsel = "1"
+    st.session_state.parsel = "10"
 if "tapu_alani" not in st.session_state:
-    st.session_state.tapu_alani = 6721.92
+    st.session_state.tapu_alani = 6398.86
 if "kaks" not in st.session_state:
     st.session_state.kaks = 0.40
 if "taks" not in st.session_state:
     st.session_state.taks = 0.30
 
-# Header Logoları
+# Header Logoları ve Üst Başlık
 col_l1, col_l2 = st.columns([1, 4])
 with col_l1:
     try:
@@ -118,7 +128,7 @@ with st.sidebar:
     )
     
     yapi_tipolojisi = st.selectbox(
-        "Mimar Yapı Tipolojisi Tercihi",
+        "Mimari Yapı Tipolojisi Tercihi",
         ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"]
     )
 
@@ -151,7 +161,7 @@ ilave_emsal_harici = net_emsal_alani * 0.30
 toplam_brut_insaat = net_emsal_alani * 1.30
 max_taban_alani = net_alan * taks
 
-toplam_unite_adedi = int(toplam_brut_insaat / unite_m2)
+toplam_unite_adedi = int(toplam_brut_insaat / unite_m2) if unite_m2 > 0 else 0
 toplam_insaat_maliyeti_usd = toplam_brut_insaat * birim_maliyeti_usd
 toplam_proje_geliri_usd = toplam_brut_insaat * satis_m2_fiyati_usd
 
@@ -199,58 +209,87 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# PDF Oluşturma Metodu (Çift Logo ve Dolar Destekli)
+# PDF Oluşturma Metodu (Kurumsal Tasarım ve Türkçe Font)
 def kapsamli_pdf_olustur():
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     styles = getSampleStyleSheet()
 
-    # Logoları Yan Yana Ekleme
+    # Logoları Hizalı Şekilde Üst Bilgiye Yerleştirme
     try:
-        img_ist = RLImage("istestate_logo.png", width=120, height=45)
-        img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=45)
-        logo_table = Table([[img_ist, img_mer]], colWidths=[270, 270])
+        img_ist = RLImage("istestate_logo.png", width=140, height=50)
+        img_mer = RLImage("meric_insaat_emlak_logo.png", width=180, height=50)
+        logo_table = Table([[img_ist, img_mer]], colWidths=[265, 265])
         logo_table.setStyle(TableStyle([
             ('ALIGN', (0,0), (0,0), 'LEFT'),
             ('ALIGN', (1,0), (1,0), 'RIGHT'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
         ]))
         story.append(logo_table)
-        story.append(Spacer(1, 10))
     except Exception:
         pass
 
-    title_style = ParagraphStyle('T1', parent=styles['Heading1'], fontSize=11, textColor=colors.HexColor('#1A2B4C'), alignment=1)
-    sub_style = ParagraphStyle('T2', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#555555'), alignment=1, spaceAfter=8)
+    title_style = ParagraphStyle(
+        'DocTitle', 
+        parent=styles['Heading1'], 
+        fontName=FONT_BOLD, 
+        fontSize=12, 
+        textColor=colors.HexColor('#1A2B4C'), 
+        alignment=1, 
+        spaceAfter=4
+    )
+    sub_style = ParagraphStyle(
+        'DocSub', 
+        parent=styles['Normal'], 
+        fontName=FONT_BOLD, 
+        fontSize=9, 
+        textColor=colors.HexColor('#C0392B'), 
+        alignment=1, 
+        spaceAfter=12
+    )
 
-    story.append(Paragraph(tr_fix("ISTESTATE MERIC GAYRIMENKUL DANIŞMANLIK & MERIC INSAAT EMLAK"), title_style))
-    story.append(Paragraph(tr_fix(f"DETAYLI TAŞINMAZ IMAR, MIMARI & FINANSAL FIZIBILITE RAPORU ({sunum_tipi.upper()})"), sub_style))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1A2B4C'), spaceAfter=10))
+    story.append(Paragraph("İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK & MERİÇ İNŞAAT EMLAK", title_style))
+    story.append(Paragraph(f"TAŞINMAZ İMAR, MİMARİ & FİNANSAL FİZİBİLİTE RAPORU ({sunum_tipi.upper()})", sub_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1A2B4C'), spaceAfter=12))
+
+    # Hücre İçi Metin Stilleri
+    cell_head_style = ParagraphStyle('CellHead', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#1A2B4C'))
+    cell_value_style = ParagraphStyle('CellValue', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#2C3E50'))
 
     data_summary = [
-        [tr_fix("Mahalle / Ada / Parsel"), tr_fix(f"{mahalle} / {ada} / {parsel}"), tr_fix("Imar Fonksiyonu"), tr_fix(imar_fonksiyonu)],
-        [tr_fix("Yapı Tipolojisi"), tr_fix(yapi_tipolojisi), tr_fix("Nitelik / Terk"), tr_fix(f"{nitelik} / {terk_str}")],
-        [tr_fix("Tapu Alanı"), f"{tapu_alani:,.2f} m2", tr_fix("Hesaba Esas Net Alan"), f"{net_alan:,.2f} m2"],
-        [tr_fix("Toplam Brüt İnşaat"), f"{toplam_brut_insaat:,.2f} m2", tr_fix("Tahmini Unite Sayısı"), f"~{toplam_unite_adedi} Adet ({unite_m2}m2)"],
-        [tr_fix("Toplam Proje Ciro Hacmi"), f"${toplam_proje_geliri_usd:,.0f}", tr_fix("Tahmini Net Kar ($)"), f"${mutaahhit_net_kar_usd:,.0f}"]
+        [Paragraph("Mahalle / Ada / Parsel", cell_head_style), Paragraph(f"{mahalle} / {ada} / {parsel}", cell_value_style), Paragraph("İmar Fonksiyonu", cell_head_style), Paragraph(imar_fonksiyonu, cell_value_style)],
+        [Paragraph("Yapı Tipolojisi", cell_head_style), Paragraph(yapi_tipolojisi, cell_value_style), Paragraph("Nitelik / Terk", cell_head_style), Paragraph(f"{nitelik} / {terk_str}", cell_value_style)],
+        [Paragraph("Tapu Alanı", cell_head_style), Paragraph(f"{tapu_alani:,.2f} m²", cell_value_style), Paragraph("Hesaba Esas Net Alan", cell_head_style), Paragraph(f"{net_alan:,.2f} m²", cell_value_style)],
+        [Paragraph("Toplam Brüt İnşaat", cell_head_style), Paragraph(f"{toplam_brut_insaat:,.2f} m²", cell_value_style), Paragraph("Tahmini Ünite Sayısı", cell_head_style), Paragraph(f"~{toplam_unite_adedi} Adet ({unite_m2} m²)", cell_value_style)],
+        [Paragraph("Toplam Proje Ciro Hacmi", cell_head_style), Paragraph(f"${toplam_proje_geliri_usd:,.0f}", cell_value_style), Paragraph("Tahmini Net Kar ($)", cell_head_style), Paragraph(f"${mutaahhit_net_kar_usd:,.0f}", cell_value_style)]
     ]
     
-    t_sum = Table(data_summary, colWidths=[130, 140, 130, 140])
+    t_sum = Table(data_summary, colWidths=[130, 135, 130, 135])
     t_sum.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8F9FA')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CCCCCC')),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('PADDING', (0,0), (-1,-1), 5),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 6),
     ]))
     story.append(t_sum)
     story.append(Spacer(1, 15))
 
-    iletisim = tr_fix("<b>Istestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b><br/>" \
-               "Umutcan K. MERIC (0539 451 61 61) | Süleyman MERIC (0532 695 10 83)<br/>" \
-               "<b>Adres:</b> Ciftlik Mah. Cavusbasi Cumhuriyet Cad. No:171/3 Beykoz/ISTANBUL")
-    story.append(Paragraph(iletisim, styles['Normal']))
+    footer_style = ParagraphStyle(
+        'FooterText', 
+        parent=styles['Normal'], 
+        fontName=FONT_NAME, 
+        fontSize=8, 
+        textColor=colors.HexColor('#4A5568'), 
+        leading=11
+    )
+    
+    iletisim = "<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b><br/>" \
+               "Umutcan K. MERİÇ (0539 451 61 61) | Süleyman MERİÇ (0532 695 10 83)<br/>" \
+               "<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
+    
+    story.append(Paragraph(iletisim, footer_style))
 
     doc.build(story)
     buffer.seek(0)
