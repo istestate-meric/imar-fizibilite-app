@@ -47,7 +47,7 @@ with st.sidebar:
                         extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
 
                     genai.configure(api_key=gemini_api_key)
-                    model = genai.GenerativeModel('gemini-2.5-flash')
+                    model = genai.GenerativeModel('gemini-3.6-flash')
                     
                     prompt = f"""
                     Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
