@@ -16,25 +16,25 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# ReportLab Türkçe Font Kaydı (DejaVuSans Otomatik Yükleme)
+# ReportLab Türkçe Font Kaydı (Google Fonts Roboto - Tam UTF-8 Desteği)
 @st.cache_resource
 def register_fonts():
     try:
-        font_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
-        font_bold_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf"
+        font_url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+        font_bold_url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
         
-        urllib.request.urlretrieve(font_url, "DejaVuSans.ttf")
-        urllib.request.urlretrieve(font_bold_url, "DejaVuSans-Bold.ttf")
+        urllib.request.urlretrieve(font_url, "Roboto-Regular.ttf")
+        urllib.request.urlretrieve(font_bold_url, "Roboto-Bold.ttf")
         
-        pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
-        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', 'DejaVuSans-Bold.ttf'))
+        pdfmetrics.registerFont(TTFont('Roboto', 'Roboto-Regular.ttf'))
+        pdfmetrics.registerFont(TTFont('Roboto-Bold', 'Roboto-Bold.ttf'))
         return True
-    except Exception as e:
+    except Exception:
         return False
 
 fonts_loaded = register_fonts()
-FONT_NAME = 'DejaVuSans' if fonts_loaded else 'Helvetica'
-FONT_BOLD = 'DejaVuSans-Bold' if fonts_loaded else 'Helvetica-Bold'
+FONT_NAME = 'Roboto' if fonts_loaded else 'Helvetica'
+FONT_BOLD = 'Roboto-Bold' if fonts_loaded else 'Helvetica-Bold'
 
 # API Key Secrets kontrolü
 try:
@@ -140,8 +140,8 @@ with st.sidebar:
     sunum_tipi = st.selectbox("Sunum Modeli", ["Satılık", "Kat Karşılığı"])
 
     st.header("3. Finansal Parametreler ($ USD)")
-    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=750, step=50)
-    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=2800, step=100)
+    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=1200, step=50)
+    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=5000, step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50)
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
@@ -208,53 +208,59 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# PDF Oluşturma Metodu (Yatay Format & Profesyonel Tablo Tasarımı)
-def yatay_pdf_olustur():
+# Banner ve Tablolu Kurumsal PDF Oluşturma Metodu
+def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
-    # Yatay A4 formatı
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=landscape(A4), 
-        rightMargin=30, 
-        leftMargin=30, 
+        rightMargin=25, 
+        leftMargin=25, 
         topMargin=20, 
         bottomMargin=20
     )
     story = []
-    styles = getSampleStyleSheet()
 
-    # Logolar ve Üst Başlık Tablosu
+    # Banner İçin Stiller
+    banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=12, textColor=colors.white, alignment=1, leading=15)
+    banner_sub = ParagraphStyle('BSub', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#FFD700'), alignment=1, leading=12)
+
+    # Logolar ve Banner Alanı
     try:
         img_ist = RLImage("istestate_logo.png", width=140, height=45)
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=45)
         
-        header_text = Paragraph(
-            f"<b>İSTESTATE & MERİÇ İNŞAAT EMLAK</b><br/>"
-            f"<font size=9 color='#C0392B'><b>PARSEL BAZLI DETAY & MİMARİ POTANSİYEL ANALİZ RAPORU</b></font>",
-            ParagraphStyle('HText', fontName=FONT_BOLD, fontSize=11, leading=14, alignment=1)
+        banner_text = Paragraph(
+            "İSTESTATE & MERİÇ İNŞAAT EMLAK<br/>"
+            "<font size=8 color='#E2E8F0'>DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU</font>", 
+            banner_title
         )
         
-        header_table = Table([[img_ist, header_text, img_mer]], colWidths=[180, 422, 180])
-        header_table.setStyle(TableStyle([
+        # Banner Kutusu (Lacivert Arka Planlı Tablo)
+        banner_table = Table([[img_ist, banner_text, img_mer]], colWidths=[170, 452, 170])
+        banner_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1A2B4C')),
             ('ALIGN', (0,0), (0,0), 'LEFT'),
             ('ALIGN', (1,0), (1,0), 'CENTER'),
             ('ALIGN', (2,0), (2,0), 'RIGHT'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('LEFTPADDING', (0,0), (-1,-1), 10),
+            ('RIGHTPADDING', (0,0), (-1,-1), 10),
         ]))
-        story.append(header_table)
-        story.append(Spacer(1, 10))
+        story.append(banner_table)
+        story.append(Spacer(1, 12))
     except Exception:
         pass
 
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1A2B4C'), spaceAfter=10))
-
-    # Hücre İçi Metin Stilleri
+    # Tablo İçi Metin Stilleri
     th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=8, textColor=colors.white, alignment=1)
     td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#2C3E50'), alignment=1)
     td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#1A2B4C'), alignment=1)
+    st_title = ParagraphStyle('SubTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1A2B4C'), spaceAfter=5)
 
     # Tablo 1: Parsel Bazlı Detay Tablosu
-    st_title = ParagraphStyle('SubTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1A2B4C'), spaceAfter=5)
     story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", st_title))
 
     headers_t1 = [
@@ -283,13 +289,13 @@ def yatay_pdf_olustur():
         Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
 
-    table1 = Table([headers_t1, row_t1], colWidths=[80, 50, 50, 75, 95, 85, 115, 45, 95, 92])
+    table1 = Table([headers_t1, row_t1], colWidths=[80, 50, 50, 75, 95, 85, 115, 45, 95, 102])
     table1.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A2B4C')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CCCCCC')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('PADDING', (0,0), (-1,-1), 6),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8F9FA')),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
     ]))
     story.append(table1)
     story.append(Spacer(1, 12))
@@ -319,19 +325,19 @@ def yatay_pdf_olustur():
         Paragraph(f"${mutaahhit_net_kar_usd:,.0f}", td_bold)
     ]
 
-    table2 = Table([headers_t2, row_t2], colWidths=[110, 80, 95, 80, 105, 80, 115, 117])
+    table2 = Table([headers_t2, row_t2], colWidths=[110, 80, 95, 80, 105, 80, 115, 127])
     table2.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2C3E50')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CCCCCC')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('PADDING', (0,0), (-1,-1), 6),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8F9FA')),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
     ]))
     story.append(table2)
     story.append(Spacer(1, 15))
 
     # Alt Bilgi ve İletişim
-    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#555555'), leading=11)
+    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#475569'), leading=11)
     iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
                f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
                f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
@@ -341,10 +347,14 @@ def yatay_pdf_olustur():
     buffer.seek(0)
     return buffer
 
+# Kurumsal Dosya Adı Yapılandırması
+clean_mahalle = re.sub(r'[^\w\s-]', '', mahalle).strip().replace(" ", "_")
+kurumsal_dosya_adi = f"ISTESTATE_MERIC_Fizibilite_Raporu_{clean_mahalle}_{ada}_{parsel}_2026.pdf"
+
 st.divider()
 st.download_button(
-    label="📄 Yatay Formatlı Kurumsal PDF Raporunu İndir ($ USD)",
-    data=yatay_pdf_olustur(),
-    file_name=f"{mahalle}_{ada}_{parsel}_Yatay_Fizibilite.pdf",
+    label="📄 Kurumsal PDF Raporunu İndir ($ USD)",
+    data=yatay_kurumsal_pdf_olustur(),
+    file_name=kurumsal_dosya_adi,
     mime="application/pdf"
 )
