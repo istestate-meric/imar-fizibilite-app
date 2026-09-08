@@ -24,23 +24,33 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# BÖLGE VE MAHALLE HİYERARŞİSİ
+# BÖLGE VE YALIN MAHALLE HİYERARŞİSİ ("Mh." EKLERİ KALDIRILDI)
 # ---------------------------------------------------------
 BOLGE_MAHALLE_HARITASI = {
-    "Anadoluhisarı": ["Anadolu Hisarı Mh.", "Kanlıca Mh.", "Kavacık Mh."],
-    "Beykoz": ["Gümüşsuyu Mh.", "Merkez Mah.", "Ortaçeşme Mh.", "Tokatköy Mh.", "Yalıköy Mh.", "Yeni Mahalle Mah."],
-    "Çavuşbaşı": ["Baklacı Mh.", "Çavuşbaşı Çiftlik Mh.", "Çengeldere Mh.", "Fatih Mah.", "Yavuz Selim Mah."],
-    "Çubuklu": ["Çubuklu Mh.", "Rüzgarlıbahçe Mh."],
-    "Göksu": ["Göksu Mh.", "Göztepe Mh."],
-    "Paşabahçe": ["Acarlar Mah.", "Çiğdem Mh.", "İncirköy Mh.", "Paşabahçe Mh.", "Soğuksu Mh."],
-    "Tokatköy": ["Anadolu Kavağı Mh.", "Çamlıbahçe Mh.", "Tokatköy Mh.", "Yalıköy Mh."],
+    "Anadoluhisarı": ["Anadolu Hisarı", "Kanlıca", "Kavacık"],
+    "Beykoz": ["Gümüşsuyu", "Merkez", "Ortaçeşme", "Tokatköy", "Yalıköy", "Yeni Mahalle"],
+    "Çavuşbaşı": ["Baklacı", "Çiftlik", "Çengeldere", "Fatih", "Yavuz Selim"],
+    "Çubuklu": ["Çubuklu", "Rüzgarlıbahçe"],
+    "Göksu": ["Göksu", "Göztepe"],
+    "Paşabahçe": ["Acarlar", "Çiğdem", "İncirköy", "Paşabahçe", "Soğuksu"],
+    "Tokatköy": ["Anadolu Kavağı", "Çamlıbahçe", "Tokatköy", "Yalıköy"],
     "Köyler": [
-        "Akbaba Mh.", "Alibahadır Mh.", "Anadolufeneri Mh.", "Bozhane Mh.", "Cumhuriyetköy Mh.",
-        "Dereseki Mh.", "Elmalı Mh.", "Göllü Mh.", "Görele Mh.", "İshaklı Mh.",
-        "Kaynarca Mh.", "Kılıçlı Mh.", "Mahmutşevketpaşa Mh.", "Öğümce Mh.", "Örnekköy Mh.",
-        "Paşamandıra Mh.", "Polonezköy Mh.", "Poyrazköy Mh.", "Riva Mh.", "Zerzavatçı Mh."
+        "Akbaba", "Alibahadır", "Anadolufeneri", "Bozhane", "Cumhuriyetköy",
+        "Dereseki", "Elmalı", "Göllü", "Görele", "İshaklı",
+        "Kaynarca", "Kılıçlı", "Mahmutşevketpaşa", "Öğümce", "Örnekköy",
+        "Paşamandıra", "Polonezköy", "Poyrazköy", "Riva", "Zerzavatçı"
     ]
 }
+
+def clean_mahalle_name(name):
+    """Metin içindeki Mh., Mah., Mahallesi gibi ekleri ve gereksiz boşlukları temizler."""
+    if not name:
+        return ""
+    name = str(name).strip()
+    # Eki ve varyasyonları temizle
+    pattern = r'(?i)\b(ÇAVUŞBAŞI\s+)?(mh\.?|mah\.?|mahallesi)\b'
+    cleaned = re.sub(pattern, '', name).strip()
+    return cleaned if cleaned else name.strip()
 
 def init_db():
     conn = sqlite3.connect("imar_hafizasi.db")
@@ -65,6 +75,7 @@ init_db()
 def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
     conn = sqlite3.connect("imar_hafizasi.db")
     cursor = conn.cursor()
+    sade_mahalle = clean_mahalle_name(mahalle).upper()
     cursor.execute("""
         INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, kaks, taks)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -72,7 +83,7 @@ def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
             tapu_alani=excluded.tapu_alani,
             kaks=excluded.kaks,
             taks=excluded.taks
-    """, (str(mahalle).upper(), str(ada), str(parsel), float(tapu_alani), float(kaks), float(taks)))
+    """, (sade_mahalle, str(ada).strip(), str(parsel).strip(), float(tapu_alani), float(kaks), float(taks)))
     conn.commit()
     conn.close()
 
@@ -86,11 +97,29 @@ def db_kayit_sil(record_id):
 def db_kayit_sorgula(mahalle, ada, parsel):
     conn = sqlite3.connect("imar_hafizasi.db")
     cursor = conn.cursor()
+    
+    sade_mahalle = clean_mahalle_name(mahalle).upper()
+    ada_str = str(ada).strip()
+    parsel_str = str(parsel).strip()
+
+    # 1. Esnek LIKE ve Tam Eşleşme Sorgusu
     cursor.execute("""
-        SELECT tapu_alani, kaks, taks FROM imar_kayitlari 
-        WHERE upper(mahalle) = upper(?) AND ada = ? AND parsel = ?
-    """, (str(mahalle), str(ada), str(parsel)))
+        SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
+        WHERE (UPPER(mahalle) = ? OR UPPER(mahalle) LIKE ? OR ? LIKE '%' || UPPER(mahalle) || '%')
+          AND CAST(ada AS TEXT) = ? 
+          AND CAST(parsel AS TEXT) = ?
+    """, (sade_mahalle, f"%{sade_mahalle}%", sade_mahalle, ada_str, parsel_str))
+    
     result = cursor.fetchone()
+    
+    # 2. Eğer Mahalle İsmi Farklı Kaydedildiyse Sadece Ada/Parsel ile Son Çare Ara
+    if not result:
+        cursor.execute("""
+            SELECT tapu_alani, kaks, taks, mahalle FROM imar_kayitlari 
+            WHERE CAST(ada AS TEXT) = ? AND CAST(parsel AS TEXT) = ?
+        """, (ada_str, parsel_str))
+        result = cursor.fetchone()
+
     conn.close()
     return result
 
@@ -181,9 +210,9 @@ try:
 except Exception:
     gemini_api_key = None
 
-# Session State
+# Session State Hazırlığı
 if "bolge" not in st.session_state: st.session_state.bolge = "Çavuşbaşı"
-if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuz Selim Mah."
+if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuz Selim"
 if "ada" not in st.session_state: st.session_state.ada = "1658"
 if "parsel" not in st.session_state: st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
@@ -213,7 +242,7 @@ with col_header3:
 
 st.divider()
 
-# SOL PANEL (Girdiler)
+# SOL PANEL
 with st.sidebar:
     st.markdown("### 📄 1. Belge Analizi & Akıllı Hafıza")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
@@ -234,7 +263,7 @@ with st.sidebar:
                         
                         prompt = f"""
                         Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
-                        - mahalle (metin)
+                        - mahalle (metin, Mh/Mah eklerini temizle)
                         - ada (metin)
                         - parsel (metin)
                         - tapu_alani (sayı)
@@ -250,7 +279,7 @@ with st.sidebar:
                         
                         if clean_json:
                             data = json.loads(clean_json.group())
-                            st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle))
+                            st.session_state.mahalle = clean_mahalle_name(data.get("mahalle", st.session_state.mahalle))
                             st.session_state.ada = str(data.get("ada", st.session_state.ada))
                             st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
                             st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
@@ -276,12 +305,13 @@ with st.sidebar:
     selected_bolge = st.selectbox("Bölge / Semt Seçin", options=bolge_listesi, index=bolge_listesi.index(st.session_state.bolge) if st.session_state.bolge in bolge_listesi else 2)
     st.session_state.bolge = selected_bolge
 
-    # Seçilen Bölgeye Göre Mahalle Seçimi
+    # Seçilen Bölgeye Göre Mahalle Seçimi (Yalın Liste)
     bagli_mahalleler = BOLGE_MAHALLE_HARITASI[selected_bolge]
     
+    current_sade_mahalle = clean_mahalle_name(st.session_state.mahalle)
     selected_mahalle_index = 0
-    if st.session_state.mahalle in bagli_mahalleler:
-        selected_mahalle_index = bagli_mahalleler.index(st.session_state.mahalle)
+    if current_sade_mahalle in bagli_mahalleler:
+        selected_mahalle_index = bagli_mahalleler.index(current_sade_mahalle)
 
     mahalle = st.selectbox("Mahalle Seçin", options=bagli_mahalleler, index=selected_mahalle_index)
     st.session_state.mahalle = mahalle
@@ -443,12 +473,13 @@ with tab4:
     conn.close()
     
     if not df_db.empty:
+        # Tablodaki eski kayıtların Mh. eklerini de arayüzde temiz gösterelim
+        df_db["Mahalle"] = df_db["Mahalle"].apply(clean_mahalle_name)
         st.dataframe(df_db.drop(columns=["id"]), use_container_width=True)
         
         st.markdown("---")
         st.markdown("#### 🗑️ Kayıt Silme İşlemi")
         
-        # Silme için seçenek listesi oluştur
         options_dict = {f"ID: {row['id']} | {row['Mahalle']} - Ada: {row['Ada']} / Parsel: {row['Parsel']}": row['id'] for _, row in df_db.iterrows()}
         selected_to_delete = st.selectbox("Silmek İstediğiniz Kaydı Seçin:", options=list(options_dict.keys()))
         
@@ -512,7 +543,7 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph(tr_fix("FONKSİYON"), th_style), Paragraph(tr_fix("KAKS"), th_style), Paragraph(tr_fix("HAM İNŞAAT (M²)"), th_style), Paragraph(tr_fix("NET KAPALI İNŞAAT (M²)"), th_style)
     ]
     row_t1 = [
-        Paragraph(tr_fix(mahalle), td_style), Paragraph(tr_fix(str(ada)), td_style), Paragraph(tr_fix(str(parsel)), td_style),
+        Paragraph(tr_fix(clean_mahalle_name(mahalle)), td_style), Paragraph(tr_fix(str(ada)), td_style), Paragraph(tr_fix(str(parsel)), td_style),
         Paragraph(tr_fix(nitelik), td_style), Paragraph(f"{tapu_alani:,.2f}", td_style), Paragraph(f"{net_alan:,.2f}", td_style),
         Paragraph(tr_fix(imar_fonksiyonu), td_style), Paragraph(f"{kaks:.2f}", td_style), Paragraph(f"{ham_toplam_brut_insaat:,.2f}", td_style), Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
@@ -594,7 +625,7 @@ def yatay_kurumsal_pdf_olustur():
     buffer.seek(0)
     return buffer
 
-clean_mahalle = re.sub(r'[^\w\s-]', '', mahalle).strip().replace(" ", "_")
+clean_mahalle = re.sub(r'[^\w\s-]', '', clean_mahalle_name(mahalle)).strip().replace(" ", "_")
 kurumsal_dosya_adi = f"ISTESTATE_MERIC_Fizibilite_Raporu_{clean_mahalle}_{ada}_{parsel}_2026.pdf"
 
 st.divider()
