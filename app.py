@@ -9,7 +9,7 @@ import google.generativeai as genai
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -17,27 +17,26 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# Türkçe Karakter Destekli Font İndirme ve Kaydetme Fonksiyonu
+# Türkçe Karakter Destekli Font Kayıt Sistemi
 @st.cache_resource
-def setup_turkish_fonts():
-    font_url = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf"
-    font_bold_url = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans-Bold.ttf"
+def register_turkish_fonts():
+    font_url = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf"
+    font_bold_url = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Bold.ttf"
     
     try:
         req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
-            pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(response.read())))
+            pdfmetrics.registerFont(TTFont('TR_Roboto', io.BytesIO(response.read())))
             
         req_bold = urllib.request.Request(font_bold_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req_bold) as response:
-            pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(response.read())))
+            pdfmetrics.registerFont(TTFont('TR_Roboto_Bold', io.BytesIO(response.read())))
             
-        return 'TR_Font', 'TR_Font_Bold'
+        return 'TR_Roboto', 'TR_Roboto_Bold'
     except Exception:
-        # Alternatif Güvenli Yükleme
         return 'Helvetica', 'Helvetica-Bold'
 
-FONT_NAME, FONT_BOLD = setup_turkish_fonts()
+FONT_NAME, FONT_BOLD = register_turkish_fonts()
 
 # Gemini API Key Secrets Kontrolü
 try:
@@ -47,17 +46,17 @@ except Exception:
 
 # Session State Başlangıç Değerleri
 if "mahalle" not in st.session_state:
-    st.session_state.mahalle = "Çiftlik"
+    st.session_state.mahalle = "Yavuzselim"
 if "ada" not in st.session_state:
-    st.session_state.ada = "1612"
+    st.session_state.ada = "1658"
 if "parsel" not in st.session_state:
-    st.session_state.parsel = "11"
+    st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state:
-    st.session_state.tapu_alani = 2471.67
+    st.session_state.tapu_alani = 6721.92
 if "kaks" not in st.session_state:
-    st.session_state.kaks = 0.30
+    st.session_state.kaks = 0.45
 if "taks" not in st.session_state:
-    st.session_state.taks = 0.20
+    st.session_state.taks = 0.30
 
 # Header Logoları
 col_l1, col_l2 = st.columns([1, 4])
@@ -174,7 +173,7 @@ if sunum_tipi == "Kat Karşılığı":
 else:
     mutaahhit_net_kar_usd = toplam_proje_geliri_usd - toplam_insaat_maliyeti_usd
 
-# Sekmeli Detay Ekranı
+# Ekran Sekmeleri
 tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Tipoloji", "💰 Finansal Fizibilite ($ USD)"])
 
 with tab1:
@@ -211,7 +210,7 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# Birebir Aynı Tasarım & Türkçe Karakter Korumalı PDF Fonksiyonu
+# Türkçe Karakter Garantili PDF Üretme Metodu
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -224,17 +223,15 @@ def yatay_kurumsal_pdf_olustur():
     )
     story = []
 
-    # Banner Başlık Stilleri (Türkçe Font Tanımlı)
-    banner_title_style = ParagraphStyle(
-        'BTitle', 
-        fontName=FONT_BOLD, 
-        fontSize=12, 
-        textColor=colors.white, 
-        alignment=1, 
-        leading=15
-    )
+    # Bütün Stillerde Türkçe Karakter Fontu Zorunlu Kılınmıştır
+    banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=11, textColor=colors.white, alignment=1, leading=14)
+    th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
+    td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
+    td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#0F172A'), alignment=1, leading=10)
+    section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
+    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
 
-    # Logolar ve Banner Alanı (Birebir İletilen Tasarım)
+    # Logolar ve Banner Alanı
     try:
         img_ist = RLImage("istestate_logo.png", width=150, height=48)
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=48)
@@ -242,10 +239,9 @@ def yatay_kurumsal_pdf_olustur():
         banner_text = Paragraph(
             "<b>İSTESTATE & MERİÇ İNŞAAT EMLAK</b><br/>"
             "<font size=8 color='#E2E8F0'>DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU</font>", 
-            banner_title_style
+            banner_title
         )
         
-        # Lacivert Kurumsal Banner Çerçevesi
         banner_table = Table([[img_ist, banner_text, img_mer]], colWidths=[160, 482, 160])
         banner_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1B2A47')),
@@ -263,13 +259,7 @@ def yatay_kurumsal_pdf_olustur():
     except Exception:
         pass
 
-    # Tablo Metin Stilleri
-    th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
-    td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
-    td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#0F172A'), alignment=1, leading=10)
-    section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
-
-    # Tablo 1: Parsel Bazlı Detay Tablosu (Genişlik Hizasında Düzenlendi)
+    # Tablo 1: Parsel Bazlı Detay Tablosu
     story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", section_title))
 
     headers_t1 = [
@@ -286,7 +276,7 @@ def yatay_kurumsal_pdf_olustur():
     ]
 
     row_t1 = [
-        Paragraph(mahalle.upper(), td_style),
+        Paragraph(mahalle, td_style),
         Paragraph(str(ada), td_style),
         Paragraph(str(parsel), td_style),
         Paragraph(nitelik, td_style),
@@ -298,7 +288,6 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
 
-    # Toplam genişlik A4 Yatay Yazdırılabilir Alanı (802 pt) ile Tam Birebir Eşleşir
     table1 = Table([headers_t1, row_t1], colWidths=[80, 45, 45, 70, 95, 90, 125, 45, 100, 107])
     table1.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A47')),
@@ -311,7 +300,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 14))
 
-    # Tablo 2: Mimari Potansiyel & Finansal Özellikler Tablosu
+    # Tablo 2: Mimari Potansiyel & Finansal Fizibilite Tablosu
     story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", section_title))
 
     headers_t2 = [
@@ -348,8 +337,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table2)
     story.append(Spacer(1, 16))
 
-    # Alt Bilgi ve İletişim Metni
-    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
+    # Alt Bilgi Metni
     iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
                f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
                f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
