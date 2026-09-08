@@ -205,6 +205,16 @@ with st.sidebar:
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
 
+    # HAVUZ SEÇENEĞİ (YENİ EKLENEN ÖZELLİK)
+    st.markdown("#### 🏊 Havuz Proje Seçenekleri")
+    havuz_tercihi = st.selectbox("Havuz Tipi", ["Havuzsuz", "Müstakil Havuzlu (Her Üniteye)", "Ortak Kullanım Havuzlu"])
+    
+    havuz_m2_birim = 0.0
+    if havuz_tercihi == "Müstakil Havuzlu (Her Üniteye)":
+        havuz_m2_birim = st.number_input("Ünite Başı Müstakil Havuz Alanı (m²)", value=35.0, step=5.0)
+    elif havuz_tercihi == "Ortak Kullanım Havuzlu":
+        havuz_m2_birim = st.number_input("Toplam Ortak Havuz Alanı (m²)", value=120.0, step=10.0)
+
     tapu_alani = st.number_input("Tapu Alanı (m²)", value=float(st.session_state.tapu_alani), step=10.0)
     nitelik = st.selectbox("Nitelik", ["Bahçe", "Arsa", "Tarla"])
     terk_durumu = st.checkbox("18. Madde Terki Yapıldı mı?", value=False)
@@ -235,13 +245,12 @@ with st.sidebar:
             
         st.session_state.last_searched_key = current_search_key
 
-    # DİLEĞE GÖRE MANUEL DEĞİŞTİRİLEBİLİR INPUT ALANLARI
     birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=st.session_state.get("auto_maliyet_usd", 1200), step=50)
     satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=st.session_state.get("auto_satis_usd", 5000), step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50) if sunum_tipi == "Kat Karşılığı" else 50
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
-# Hesaplama Mantığı
+# TEMEL İMAR HESAPLARI
 if terk_durumu or nitelik.lower() == 'arsa':
     net_alan = tapu_alani
     kesinti_orani = 0.0
@@ -253,11 +262,25 @@ else:
 
 net_emsal_alani = net_alan * kaks
 ilave_emsal_harici = net_emsal_alani * 0.30
-toplam_brut_insaat = net_emsal_alani * 1.30
+ham_toplam_brut_insaat = net_emsal_alani * 1.30
 max_taban_alani = net_alan * taks
 
+# HAVUZ ALANI VE DÜŞÜŞ HESAPLAMALARI
+gecici_unite_adedi = int(ham_toplam_brut_insaat / unite_m2) if unite_m2 > 0 else 0
+
+if havuz_tercihi == "Müstakil Havuzlu (Her Üniteye)":
+    toplam_havuz_alani = gecici_unite_adedi * havuz_m2_birim
+elif havuz_tercihi == "Ortak Kullanım Havuzlu":
+    toplam_havuz_alani = havuz_m2_birim
+else:
+    toplam_havuz_alani = 0.0
+
+# Toplam inşaat alanından havuz m2 alanının düşülmesi
+toplam_brut_insaat = max(0.0, ham_toplam_brut_insaat - toplam_havuz_alani)
 toplam_unite_adedi = int(toplam_brut_insaat / unite_m2) if unite_m2 > 0 else 0
-toplam_insaat_maliyeti_usd = toplam_brut_insaat * birim_maliyeti_usd
+
+# Finansal Hesaplamalar
+toplam_insaat_maliyeti_usd = ham_toplam_brut_insaat * birim_maliyeti_usd # Havuz imalat maliyeti dahildir
 toplam_proje_geliri_usd = toplam_brut_insaat * satis_m2_fiyati_usd
 
 if sunum_tipi == "Kat Karşılığı":
@@ -270,20 +293,20 @@ else:
     mutaahhit_net_kar_usd = toplam_proje_geliri_usd - toplam_insaat_maliyeti_usd
 
 # ANA SEKMELER
-tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Tipoloji", "💰 Finansal Fizibilite ($ USD)"])
+tab1, tab2, tab3 = st.tabs(["📐 İmar & Kapasite Analizi", "🏗️ Mimari Potansiyel & Havuz Detayı", "💰 Finansal Fizibilite ($ USD)"])
 
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Brüt Arazi Alanı", f"{tapu_alani:,.2f} m²")
     c2.metric("Hesaba Esas Net Alan", f"{net_alan:,.2f} m²", delta=f"-%{int(kesinti_orani*100)} DOP" if kesinti_orani > 0 else "Kesintisiz")
     c3.metric("Net Emsal Alanı", f"{net_emsal_alani:,.2f} m²")
-    c4.metric("TOPLAM BRÜT İNŞAAT", f"{toplam_brut_insaat:,.2f} m²")
+    c4.metric("NET KAPALI İNŞAAT", f"{toplam_brut_insaat:,.2f} m²", delta=f"-{toplam_havuz_alani:,.1f} m² Havuz Payı" if toplam_havuz_alani > 0 else "Havuzsuz")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 📋 İmar Parametre Detayları")
     df_imar = pd.DataFrame({
-        "Parametre": ["İmar Fonksiyonu", "Yapı Tipolojisi", "Terk/DOP Durumu", "Uygulanan KAKS (Emsal)", "TAKS (Taban Alanı Katsayısı)", "Max Taban Alanı", "%30 İlave Emsal Harici"],
-        "Değer": [imar_fonksiyonu, yapi_tipolojisi, terk_str, f"{kaks:.2f}", f"{taks:.2f}", f"{max_taban_alani:,.2f} m²", f"{ilave_emsal_harici:,.2f} m²"]
+        "Parametre": ["İmar Fonksiyonu", "Yapı Tipolojisi", "Havuz Durumu", "Terk/DOP Durumu", "Uygulanan KAKS (Emsal)", "TAKS (Taban Alanı Katsayısı)", "Max Taban Alanı", "%30 İlave Emsal Harici"],
+        "Değer": [imar_fonksiyonu, yapi_tipolojisi, f"{havuz_tercihi} ({toplam_havuz_alani:,.1f} m²)", terk_str, f"{kaks:.2f}", f"{taks:.2f}", f"{max_taban_alani:,.2f} m²", f"{ilave_emsal_harici:,.2f} m²"]
     })
     st.table(df_imar)
 
@@ -293,16 +316,18 @@ with tab2:
         st.markdown(f"#### 🏛️ Bölgesel Mimari Planlama ({imar_fonksiyonu})")
         st.info(f"""
         * **Tercih Edilen Tipoloji:** {yapi_tipolojisi}
-        * **Ortalama Ünite Büyüklüğü:** {unite_m2} m²
-        * **Tahmini Bağımsız Bölüm Sayısı:** ~{toplam_unite_adedi} Adet
+        * **Havuz Konfigürasyonu:** {havuz_tercihi}
+        * **Toplam Havuz M² Alanı:** {toplam_havuz_alani:,.2f} m²
+        * **Ortalama Konut Ünite Büyüklüğü:** {unite_m2} m²
+        * **Tahmini Bağımsız Bölüm Sayısı:** ~{toplam_unite_adedi} Adet Konut
         * **Taban Oturumu (TAKS Sınırı):** ~{max_taban_alani:,.2f} m²
         """)
     with col_m2:
         if sunum_tipi == "Kat Karşılığı":
             st.markdown(f"#### 🤝 Kat Karşılığı Paylaşım Modeli (%{kat_karsiligi_orani} Arsa / %{100-kat_karsiligi_orani} Müteahhit)")
             st.success(f"""
-            * **Arsa Sahibi Kalan Brüt İnşaat:** {arsa_sahibi_payi_m2:,.2f} m² (~{arsa_sahibi_unite_adedi} Ünite)
-            * **Müteahhit Kalan Brüt İnşaat:** {mutaahhit_payi_m2:,.2f} m² (~{mutaahhit_unite_adedi} Ünite)
+            * **Arsa Sahibi Kalan Net İnşaat:** {arsa_sahibi_payi_m2:,.2f} m² (~{arsa_sahibi_unite_adedi} Ünite)
+            * **Müteahhit Kalan Net İnşaat:** {mutaahhit_payi_m2:,.2f} m² (~{mutaahhit_unite_adedi} Ünite)
             """)
 
 with tab3:
@@ -360,12 +385,12 @@ def yatay_kurumsal_pdf_olustur():
     headers_t1 = [
         Paragraph(tr_fix("MAHALLE"), th_style), Paragraph(tr_fix("ADA"), th_style), Paragraph(tr_fix("PARSEL"), th_style),
         Paragraph(tr_fix("NİTELİK"), th_style), Paragraph(tr_fix("PARSEL ALANI (M²)"), th_style), Paragraph(tr_fix("NET ALAN (M²)"), th_style),
-        Paragraph(tr_fix("FONKSİYON"), th_style), Paragraph(tr_fix("KAKS"), th_style), Paragraph(tr_fix("NET İNŞAAT (M²)"), th_style), Paragraph(tr_fix("BRÜT İNŞAAT (M²)"), th_style)
+        Paragraph(tr_fix("FONKSİYON"), th_style), Paragraph(tr_fix("KAKS"), th_style), Paragraph(tr_fix("HAM İNŞAAT (M²)"), th_style), Paragraph(tr_fix("NET KAPALI İNŞAAT (M²)"), th_style)
     ]
     row_t1 = [
         Paragraph(tr_fix(mahalle), td_style), Paragraph(tr_fix(str(ada)), td_style), Paragraph(tr_fix(str(parsel)), td_style),
         Paragraph(tr_fix(nitelik), td_style), Paragraph(f"{tapu_alani:,.2f}", td_style), Paragraph(f"{net_alan:,.2f}", td_style),
-        Paragraph(tr_fix(imar_fonksiyonu), td_style), Paragraph(f"{kaks:.2f}", td_style), Paragraph(f"{net_emsal_alani:,.2f}", td_style), Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
+        Paragraph(tr_fix(imar_fonksiyonu), td_style), Paragraph(f"{kaks:.2f}", td_style), Paragraph(f"{ham_toplam_brut_insaat:,.2f}", td_style), Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
     table1 = Table([headers_t1, row_t1], colWidths=[80, 45, 45, 70, 95, 90, 125, 45, 100, 107])
     table1.setStyle(TableStyle([
@@ -377,17 +402,17 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 10))
 
-    # TABLO 2: MİMARİ POTANSİYEL
-    story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE YAPILAŞMA ANALİZİ"), section_title))
+    # TABLO 2: MİMARİ POTANSİYEL VE HAVUZ SEÇENEĞİ
+    story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE HAVUZ YAPILAŞMA DETAYI"), section_title))
     headers_t2 = [
-        Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style), Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style), Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
-        Paragraph(tr_fix("TAKS (TABAN KATSAYISI)"), th_style), Paragraph(tr_fix("MAX TABAN OTURUMU (M²)"), th_style), Paragraph(tr_fix("%30 İLAVE EMSAL HARİCİ (M²)"), th_style)
+        Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style), Paragraph(tr_fix("HAVUZ TİPİ VE ALANI"), th_style), Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style), Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
+        Paragraph(tr_fix("TAKS (TABAN KATSAYISI)"), th_style), Paragraph(tr_fix("MAX TABAN OTURUMU (M²)"), th_style)
     ]
     row_t2 = [
-        Paragraph(tr_fix(yapi_tipolojisi), td_style), Paragraph(f"{unite_m2} m²", td_style), Paragraph(f"~{toplam_unite_adedi} Adet", td_bold),
-        Paragraph(f"{taks:.2f}", td_style), Paragraph(f"{max_taban_alani:,.2f} m²", td_style), Paragraph(f"{ilave_emsal_harici:,.2f} m²", td_style)
+        Paragraph(tr_fix(yapi_tipolojisi), td_style), Paragraph(tr_fix(f"{havuz_tercihi} ({toplam_havuz_alani:,.1f} m²)"), td_style), Paragraph(f"{unite_m2} m²", td_style), Paragraph(f"~{toplam_unite_adedi} Adet", td_bold),
+        Paragraph(f"{taks:.2f}", td_style), Paragraph(f"{max_taban_alani:,.2f} m²", td_style)
     ]
-    table2 = Table([headers_t2, row_t2], colWidths=[150, 130, 120, 120, 140, 142])
+    table2 = Table([headers_t2, row_t2], colWidths=[150, 150, 110, 110, 140, 142])
     table2.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2A3B5C')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
@@ -422,7 +447,7 @@ def yatay_kurumsal_pdf_olustur():
         story.append(Paragraph(tr_fix(f"4. KAT KARŞILIĞI PAYLAŞIM DETAYLARI (%{kat_karsiligi_orani} ARSA / %{100-kat_karsiligi_orani} MÜTEAHHİT)"), section_title))
         headers_t4 = [
             Paragraph(tr_fix("PAYDAŞ"), th_style), Paragraph(tr_fix("PAY ORANI (%)"), th_style),
-            Paragraph(tr_fix("KALAN BRÜT İNŞAAT ALANI (M²)"), th_style), Paragraph(tr_fix("TAHMİNİ BAĞIMSIZ BÖLÜM ADEDİ"), th_style)
+            Paragraph(tr_fix("KALAN NET İNŞAAT ALANI (M²)"), th_style), Paragraph(tr_fix("TAHMİNİ BAĞIMSIZ BÖLÜM ADEDİ"), th_style)
         ]
         row_t4_1 = [Paragraph(tr_fix("Arsa Sahibi Payı"), td_style), Paragraph(f"%{kat_karsiligi_orani}", td_style), Paragraph(f"{arsa_sahibi_payi_m2:,.2f} m²", td_style), Paragraph(f"~{arsa_sahibi_unite_adedi} Adet", td_bold)]
         row_t4_2 = [Paragraph(tr_fix("Müteahhit Payı"), td_style), Paragraph(f"%{100-kat_karsiligi_orani}", td_style), Paragraph(f"{mutaahhit_payi_m2:,.2f} m²", td_style), Paragraph(f"~{mutaahhit_unite_adedi} Adet", td_bold)]
