@@ -105,7 +105,7 @@ def get_tcmb_usd_rate():
 def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-3.6-flash')
         
         prompt = f"""
         İstanbul Beykoz {mahalle_adi} mahallesi için güncel gayrimenkul piyasası koşullarında:
