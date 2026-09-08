@@ -24,19 +24,23 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# SİSTEM HAFIZASI & BEYKOZ MAHALLE LİSTESİ (45 MAHALLE)
+# BÖLGE VE MAHALLE HİYERARŞİSİ
 # ---------------------------------------------------------
-MAHALLE_LISTESI = [
-    "AKBABA", "ALİBAHADIR", "ANADOLU HİSARI", "ANADOLU KAVAĞI", "ANADOLUFENERİ",
-    "BAKLACI", "BEYKOZ MERKEZ", "BOZHANE", "ÇAMLIBAHÇE", "ÇENGELDERE",
-    "ÇİFTLİK", "ÇİĞDEM", "ÇUBUKLU", "CUMHURİYET", "DERESEKİ",
-    "ELMALI", "FATİH", "GÖKSU", "GÖLLÜ", "GÖRELE",
-    "GÖZTEPE", "GÜMÜŞSUYU", "İNCİRKÖY", "İSHAKLI", "KANLICA",
-    "KAVACIK", "KAYNARCA", "KILIÇLI", "MAHMUTŞEVKETPAŞA", "ÖĞÜMCE",
-    "ÖRNEKKÖY", "ORTAÇEŞME", "PAŞABAHÇE", "PAŞAMANDIRA", "POLONEZKÖY",
-    "POYRAZKÖY", "RİVA", "RÜZGARLIBAHÇE", "SOĞUKSU", "TOKATKÖY",
-    "YALIKÖY", "YAVUZ SELİM", "YENİ MAHALLE", "ZERZEVATÇI"
-]
+BOLGE_MAHALLE_HARITASI = {
+    "Anadoluhisarı": ["Anadolu Hisarı Mh.", "Kanlıca Mh.", "Kavacık Mh."],
+    "Beykoz": ["Gümüşsuyu Mh.", "Merkez Mah.", "Ortaçeşme Mh.", "Tokatköy Mh.", "Yalıköy Mh.", "Yeni Mahalle Mah."],
+    "Çavuşbaşı": ["Baklacı Mh.", "Çavuşbaşı Çiftlik Mh.", "Çengeldere Mh.", "Fatih Mah.", "Yavuz Selim Mah."],
+    "Çubuklu": ["Çubuklu Mh.", "Rüzgarlıbahçe Mh."],
+    "Göksu": ["Göksu Mh.", "Göztepe Mh."],
+    "Paşabahçe": ["Acarlar Mah.", "Çiğdem Mh.", "İncirköy Mh.", "Paşabahçe Mh.", "Soğuksu Mh."],
+    "Tokatköy": ["Anadolu Kavağı Mh.", "Çamlıbahçe Mh.", "Tokatköy Mh.", "Yalıköy Mh."],
+    "Köyler": [
+        "Akbaba Mh.", "Alibahadır Mh.", "Anadolufeneri Mh.", "Bozhane Mh.", "Cumhuriyetköy Mh.",
+        "Dereseki Mh.", "Elmalı Mh.", "Göllü Mh.", "Görele Mh.", "İshaklı Mh.",
+        "Kaynarca Mh.", "Kılıçlı Mh.", "Mahmutşevketpaşa Mh.", "Öğümce Mh.", "Örnekköy Mh.",
+        "Paşamandıra Mh.", "Polonezköy Mh.", "Poyrazköy Mh.", "Riva Mh.", "Zerzavatçı Mh."
+    ]
+}
 
 def init_db():
     conn = sqlite3.connect("imar_hafizasi.db")
@@ -72,6 +76,13 @@ def db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks):
     conn.commit()
     conn.close()
 
+def db_kayit_sil(record_id):
+    conn = sqlite3.connect("imar_hafizasi.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM imar_kayitlari WHERE id = ?", (record_id,))
+    conn.commit()
+    conn.close()
+
 def db_kayit_sorgula(mahalle, ada, parsel):
     conn = sqlite3.connect("imar_hafizasi.db")
     cursor = conn.cursor()
@@ -83,16 +94,8 @@ def db_kayit_sorgula(mahalle, ada, parsel):
     conn.close()
     return result
 
-def db_mahalleleri_getir():
-    conn = sqlite3.connect("imar_hafizasi.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT mahalle FROM imar_kayitlari")
-    rows = cursor.fetchall()
-    conn.close()
-    return [r[0] for r in rows if r[0]]
-
 # ---------------------------------------------------------
-# CSS VE DİĞER YARDIMCI FONKSİYONLAR
+# CSS VE YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 st.markdown("""
 <style>
@@ -116,8 +119,7 @@ def get_tcmb_usd_rate():
             root = tree.getroot()
             for currency in root.findall('Currency'):
                 if currency.get('CurrencyCode') == 'USD':
-                    forex_buying = currency.find('ForexBuying').text
-                    return float(forex_buying)
+                    return float(currency.find('ForexBuying').text)
     except Exception:
         return 34.50
 
@@ -126,15 +128,12 @@ def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-3.6-flash')
-        
         prompt = f"""
         İstanbul Beykoz {mahalle_adi} mahallesi için güncel gayrimenkul piyasası koşullarında:
         Yapı Tipolojisi: {tipoloji}
-        
         Aşağıdaki verileri tahmin/araştırma bazlı belirle ve SADECE saf JSON olarak döndür:
         - maliyet_usd (M² inşaat maliyeti USD cinsinden, örn: 1200)
         - satis_usd (M² satış fiyatı USD cinsinden, örn: 4500)
-
         JSON formatı: {{"maliyet_usd": 1250, "satis_usd": 5200}}
         """
         response = model.generate_content(prompt)
@@ -182,8 +181,9 @@ try:
 except Exception:
     gemini_api_key = None
 
-# Session State Tanımları
-if "mahalle" not in st.session_state: st.session_state.mahalle = "YAVUZ SELİM"
+# Session State
+if "bolge" not in st.session_state: st.session_state.bolge = "Çavuşbaşı"
+if "mahalle" not in st.session_state: st.session_state.mahalle = "Yavuz Selim Mah."
 if "ada" not in st.session_state: st.session_state.ada = "1658"
 if "parsel" not in st.session_state: st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
@@ -196,7 +196,7 @@ if "last_searched_key" not in st.session_state: st.session_state.last_searched_k
 col_header1, col_header2, col_header3 = st.columns([1.5, 4, 1.5])
 with col_header1:
     try: st.image("istestate_logo.png", use_container_width=True)
-    except Exception: st.caption("istestate_logo.png yüklenemedi")
+    except Exception: st.caption("istestate_logo.png")
 
 with col_header2:
     st.markdown("""
@@ -209,7 +209,7 @@ with col_header2:
 
 with col_header3:
     try: st.image("meric_insaat_emlak_logo.png", use_container_width=True)
-    except Exception: st.caption("meric_insaat_emlak_logo.png yüklenemedi")
+    except Exception: st.caption("meric_insaat_emlak_logo.png")
 
 st.divider()
 
@@ -221,7 +221,6 @@ with st.sidebar:
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
 
-    # AKILLI HAFIZA & OTOMATİK PDF İŞLEME AKIŞI
     if uploaded_pdf is not None:
         if st.session_state.last_uploaded_filename != uploaded_pdf.name:
             with st.spinner("PDF ve Hafıza Sorgulanıyor..."):
@@ -251,7 +250,7 @@ with st.sidebar:
                         
                         if clean_json:
                             data = json.loads(clean_json.group())
-                            st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle)).upper()
+                            st.session_state.mahalle = str(data.get("mahalle", st.session_state.mahalle))
                             st.session_state.ada = str(data.get("ada", st.session_state.ada))
                             st.session_state.parsel = str(data.get("parsel", st.session_state.parsel))
                             st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
@@ -267,25 +266,24 @@ with st.sidebar:
                             st.rerun()
 
                 except Exception as e:
-                    if "429" in str(e):
-                        st.warning("⚠️ API Kotası Doldu! Hafızadaki verileri kullanabilirsiniz.")
-                    else:
-                        st.error(f"PDF Okuma Hatası: {e}")
+                    st.error(f"PDF Okuma Hatası: {e}")
 
     st.markdown("---")
-    st.markdown("### 📍 2. Parsel & Bölge İmarı")
+    st.markdown("### 📍 2. Bölge & Parsel Seçimi")
     
-    tum_mahalleler = sorted(list(set(MAHALLE_LISTESI + db_mahalleleri_getir())))
-    current_mahalle = str(st.session_state.mahalle).upper()
-    
-    # Yazım uyuşmazlıkları için esnek indeks eşleştirme
-    default_index = 0
-    for idx, m in enumerate(tum_mahalleler):
-        if m.replace(" ", "") == current_mahalle.replace(" ", ""):
-            default_index = idx
-            break
+    # Bölge Seçimi
+    bolge_listesi = list(BOLGE_MAHALLE_HARITASI.keys())
+    selected_bolge = st.selectbox("Bölge / Semt Seçin", options=bolge_listesi, index=bolge_listesi.index(st.session_state.bolge) if st.session_state.bolge in bolge_listesi else 2)
+    st.session_state.bolge = selected_bolge
 
-    mahalle = st.selectbox("Mahalle Seçin", options=tum_mahalleler, index=default_index)
+    # Seçilen Bölgeye Göre Mahalle Seçimi
+    bagli_mahalleler = BOLGE_MAHALLE_HARITASI[selected_bolge]
+    
+    selected_mahalle_index = 0
+    if st.session_state.mahalle in bagli_mahalleler:
+        selected_mahalle_index = bagli_mahalleler.index(st.session_state.mahalle)
+
+    mahalle = st.selectbox("Mahalle Seçin", options=bagli_mahalleler, index=selected_mahalle_index)
     st.session_state.mahalle = mahalle
 
     col_a, col_p = st.columns(2)
@@ -303,7 +301,7 @@ with st.sidebar:
             st.success("✅ Veriler hafızadan çekildi!")
             st.rerun()
         else:
-            st.error(f"❌ {mahalle} {ada}/{parsel} için kaydedilmiş bir veri bulunamadı.")
+            st.error(f"❌ {mahalle} {ada}/{parsel} için kayıt bulunamadı.")
 
     imar_fonksiyonu = st.selectbox("İmar Fonksiyon Alanı", ["KONUT ALANI", "TİCARET VE KONUT ALANI", "TİCARET ALANI"])
     yapi_tipolojisi = st.selectbox("Mimari Yapı Tipolojisi Tercihi", ["Müstakil Villa", "İkiz Villa", "Bahçe - Çatı Dubleksi", "Standart Daire / Konut"])
@@ -325,7 +323,7 @@ with st.sidebar:
     with col_k: kaks = st.number_input("KAKS (Emsal)", value=float(st.session_state.kaks), step=0.05)
     with col_t: taks = st.number_input("TAKS", value=float(st.session_state.taks), step=0.05)
     
-    if st.button("💾 Mevcut Verileri Hafızaya Kaydet/Güncelle", use_container_width=True):
+    if st.button("💾 Mevcut Verileri Hafızaya Kaydet", use_container_width=True):
         db_kayit_ekle_veya_guncelle(mahalle, ada, parsel, tapu_alani, kaks, taks)
         st.toast("Veriler başarıyla hafızaya kaydedildi!", icon="✅")
 
@@ -441,14 +439,28 @@ with tab3:
 with tab4:
     st.markdown("#### 🗄️ Veri Tabanında Kayıtlı Tüm Parseller")
     conn = sqlite3.connect("imar_hafizasi.db")
-    df_db = pd.read_sql_query("SELECT mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, tapu_alani AS 'Tapu Alanı', kaks AS KAKS, taks AS TAKS FROM imar_kayitlari", conn)
+    df_db = pd.read_sql_query("SELECT id, mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, tapu_alani AS 'Tapu Alanı', kaks AS KAKS, taks AS TAKS FROM imar_kayitlari", conn)
     conn.close()
+    
     if not df_db.empty:
-        st.dataframe(df_db, use_container_width=True)
+        st.dataframe(df_db.drop(columns=["id"]), use_container_width=True)
+        
+        st.markdown("---")
+        st.markdown("#### 🗑️ Kayıt Silme İşlemi")
+        
+        # Silme için seçenek listesi oluştur
+        options_dict = {f"ID: {row['id']} | {row['Mahalle']} - Ada: {row['Ada']} / Parsel: {row['Parsel']}": row['id'] for _, row in df_db.iterrows()}
+        selected_to_delete = st.selectbox("Silmek İstediğiniz Kaydı Seçin:", options=list(options_dict.keys()))
+        
+        if st.button("❌ Seçili Kaydı Veri Tabanından Sil", type="primary"):
+            record_id_to_del = options_dict[selected_to_delete]
+            db_kayit_sil(record_id_to_del)
+            st.success("Kayıt veritabanından başarıyla silindi!")
+            st.rerun()
     else:
         st.info("Sistem hafızasında henüz kayıtlı veri bulunmuyor.")
 
-# PDF Oluşturma
+# PDF Oluşturma Fonksiyonu
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -514,7 +526,7 @@ def yatay_kurumsal_pdf_olustur():
     story.append(table1)
     story.append(Spacer(1, 10))
 
-    # TABLO 2: MİMARİ POTANSİYEL VE HAVUZ DETAYI
+    # TABLO 2: MİMARİ POTANSİYEL
     story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE HAVUZ YAPILAŞMA DETAYI"), section_title))
     headers_t2 = [
         Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style), Paragraph(tr_fix("HAVUZ TİPİ VE ALANI"), th_style), Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style), Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
