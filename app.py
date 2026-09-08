@@ -92,6 +92,32 @@ def get_tcmb_usd_rate():
     except Exception:
         return 34.50
 
+# Gemini API ile Mahalle Bazlı Canlı İnternet Arama / Fiyat Tahmin Fonksiyonu
+def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-3.6-flash')
+        
+        prompt = f"""
+        İstanbul Beykoz {mahalle_adi} mahallesi için güncel gayrimenkul piyasası koşullarında:
+        1. Yapı Tipolojisi: {tipoloji}
+        
+        Aşağıdaki verileri tahmin/araştırma bazlı belirle ve SADECE saf JSON olarak döndür:
+        - maliyet_usd (M² inşaat maliyeti Dolar USD cinsinden, örn: 1200)
+        - satis_usd (M² satış fiyatı Dolar USD cinsinden, örn: 4500)
+
+        Örnek JSON formatı:
+        {{"maliyet_usd": 1250, "satis_usd": 5200}}
+        """
+        
+        response = model.generate_content(prompt)
+        clean_json = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if clean_json:
+            return json.loads(clean_json.group())
+    except Exception:
+        pass
+    return None
+
 # Türkçe Karakter Garanti Yükleme Sistemi
 @st.cache_resource
 def setup_tr_fonts():
@@ -237,21 +263,26 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💰 3. Finansal Parametreler ($ USD)")
 
-    if st.button("🔄 TCMB Kuruna Göre Fiyatları Güncelle"):
-        usd_rate = get_tcmb_usd_rate()
-        
-        # Tipoloji bazlı tahmini TL değerleri
-        if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"]:
-            maliyet_tl = 48000
-            satis_tl = 185000
-        else:
-            maliyet_tl = 38000
-            satis_tl = 140000
+    # OTOMATİK VERİ ÇEKME BUTONU (Gemini + TCMB)
+    if st.button("🌐 İnternetten Güncel Piyasa Fiyatlarını Çek"):
+        with st.spinner("TCMB Kuru ve Mahalle Piyasa Verileri Çekiliyor..."):
+            usd_rate = get_tcmb_usd_rate()
+            market_data = fetch_market_prices_via_gemini(mahalle, yapi_tipolojisi, gemini_api_key) if gemini_api_key else None
+            
+            if market_data and "maliyet_usd" in market_data and "satis_usd" in market_data:
+                st.session_state.auto_maliyet_usd = int(market_data["maliyet_usd"])
+                st.session_state.auto_satis_usd = int(market_data["satis_usd"])
+                st.success(f"{mahalle} bölgesi piyasa verileri çekildi! (TCMB: 1 USD = {usd_rate:.2f} TL)")
+            else:
+                # Standart dinamik hesaplama yedekleme
+                maliyet_tl = 48000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 38000
+                satis_tl = 185000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 140000
+                st.session_state.auto_maliyet_usd = int(maliyet_tl / usd_rate)
+                st.session_state.auto_satis_usd = int(satis_tl / usd_rate)
+                st.info(f"TCMB Kuru (1 USD = {usd_rate:.2f} TL) üzerinden ortalama veriler güncellendi.")
+            st.rerun()
 
-        st.session_state.auto_maliyet_usd = int(maliyet_tl / usd_rate)
-        st.session_state.auto_satis_usd = int(satis_tl / usd_rate)
-        st.success(f"TCMB Dolar Kuru (1 USD = {usd_rate:.2f} TL) üzerinden güncellendi!")
-
+    # DİLEĞE GÖRE MANUEL DEĞİŞTİRİLEBİLİR INPUT ALANLARI
     birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=st.session_state.auto_maliyet_usd, step=50)
     satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=st.session_state.auto_satis_usd, step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50) if sunum_tipi == "Kat Karşılığı" else 50
