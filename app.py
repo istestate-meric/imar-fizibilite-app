@@ -212,7 +212,7 @@ with st.sidebar:
                     # Gemini API Denemesi
                     if gemini_api_key:
                         genai.configure(api_key=gemini_api_key)
-                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        model = genai.GenerativeModel('gemini-3.6-flash')
                         
                         prompt = f"""
                         Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
