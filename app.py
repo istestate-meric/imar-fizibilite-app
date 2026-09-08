@@ -6,37 +6,40 @@ import pandas as pd
 import streamlit as st
 import pdfplumber
 import google.generativeai as genai
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import HRFlowable, Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 # Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Portalı", layout="wide")
 
-# ReportLab Türkçe Font Kaydı (Google Fonts Roboto - Tam UTF-8 Desteği)
+# Türkçe Karakter Destekli Font İndirme ve Kaydetme Fonksiyonu
 @st.cache_resource
-def register_fonts():
+def setup_turkish_fonts():
+    font_url = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans.ttf"
+    font_bold_url = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts-ttf@version_2_37/ttf/DejaVuSans-Bold.ttf"
+    
     try:
-        font_url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
-        font_bold_url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
-        
-        urllib.request.urlretrieve(font_url, "Roboto-Regular.ttf")
-        urllib.request.urlretrieve(font_bold_url, "Roboto-Bold.ttf")
-        
-        pdfmetrics.registerFont(TTFont('Roboto', 'Roboto-Regular.ttf'))
-        pdfmetrics.registerFont(TTFont('Roboto-Bold', 'Roboto-Bold.ttf'))
-        return True
+        req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            pdfmetrics.registerFont(TTFont('TR_Font', io.BytesIO(response.read())))
+            
+        req_bold = urllib.request.Request(font_bold_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req_bold) as response:
+            pdfmetrics.registerFont(TTFont('TR_Font_Bold', io.BytesIO(response.read())))
+            
+        return 'TR_Font', 'TR_Font_Bold'
     except Exception:
-        return False
+        # Alternatif Güvenli Yükleme
+        return 'Helvetica', 'Helvetica-Bold'
 
-fonts_loaded = register_fonts()
-FONT_NAME = 'Roboto' if fonts_loaded else 'Helvetica'
-FONT_BOLD = 'Roboto-Bold' if fonts_loaded else 'Helvetica-Bold'
+FONT_NAME, FONT_BOLD = setup_turkish_fonts()
 
-# API Key Secrets kontrolü
+# Gemini API Key Secrets Kontrolü
 try:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -44,17 +47,17 @@ except Exception:
 
 # Session State Başlangıç Değerleri
 if "mahalle" not in st.session_state:
-    st.session_state.mahalle = "Yavuzselim"
+    st.session_state.mahalle = "Çiftlik"
 if "ada" not in st.session_state:
-    st.session_state.ada = "1658"
+    st.session_state.ada = "1612"
 if "parsel" not in st.session_state:
-    st.session_state.parsel = "1"
+    st.session_state.parsel = "11"
 if "tapu_alani" not in st.session_state:
-    st.session_state.tapu_alani = 6721.92
+    st.session_state.tapu_alani = 2471.67
 if "kaks" not in st.session_state:
-    st.session_state.kaks = 0.40
+    st.session_state.kaks = 0.30
 if "taks" not in st.session_state:
-    st.session_state.taks = 0.30
+    st.session_state.taks = 0.20
 
 # Header Logoları
 col_l1, col_l2 = st.columns([1, 4])
@@ -69,7 +72,7 @@ with col_l2:
 
 st.divider()
 
-# Sol Panel
+# Sol Panel (Girdiler)
 with st.sidebar:
     st.header("1. Belge ile Otomatik Analiz")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
@@ -208,60 +211,66 @@ with tab3:
     f2.metric("Toplam Proje Ciro Hacmi", f"${toplam_proje_geliri_usd:,.0f}")
     f3.metric("Tahmini Net Kar / Proje Marjı", f"${mutaahhit_net_kar_usd:,.0f}")
 
-# Banner ve Tablolu Kurumsal PDF Oluşturma Metodu
+# Birebir Aynı Tasarım & Türkçe Karakter Korumalı PDF Fonksiyonu
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=landscape(A4), 
-        rightMargin=25, 
-        leftMargin=25, 
+        rightMargin=20, 
+        leftMargin=20, 
         topMargin=20, 
         bottomMargin=20
     )
     story = []
 
-    # Banner İçin Stiller
-    banner_title = ParagraphStyle('BTitle', fontName=FONT_BOLD, fontSize=12, textColor=colors.white, alignment=1, leading=15)
-    banner_sub = ParagraphStyle('BSub', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#FFD700'), alignment=1, leading=12)
+    # Banner Başlık Stilleri (Türkçe Font Tanımlı)
+    banner_title_style = ParagraphStyle(
+        'BTitle', 
+        fontName=FONT_BOLD, 
+        fontSize=12, 
+        textColor=colors.white, 
+        alignment=1, 
+        leading=15
+    )
 
-    # Logolar ve Banner Alanı
+    # Logolar ve Banner Alanı (Birebir İletilen Tasarım)
     try:
-        img_ist = RLImage("istestate_logo.png", width=140, height=45)
-        img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=45)
+        img_ist = RLImage("istestate_logo.png", width=150, height=48)
+        img_mer = RLImage("meric_insaat_emlak_logo.png", width=160, height=48)
         
         banner_text = Paragraph(
-            "İSTESTATE & MERİÇ İNŞAAT EMLAK<br/>"
+            "<b>İSTESTATE & MERİÇ İNŞAAT EMLAK</b><br/>"
             "<font size=8 color='#E2E8F0'>DETAYLI İMAR, MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE RAPORU</font>", 
-            banner_title
+            banner_title_style
         )
         
-        # Banner Kutusu (Lacivert Arka Planlı Tablo)
-        banner_table = Table([[img_ist, banner_text, img_mer]], colWidths=[170, 452, 170])
+        # Lacivert Kurumsal Banner Çerçevesi
+        banner_table = Table([[img_ist, banner_text, img_mer]], colWidths=[160, 482, 160])
         banner_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1A2B4C')),
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1B2A47')),
             ('ALIGN', (0,0), (0,0), 'LEFT'),
             ('ALIGN', (1,0), (1,0), 'CENTER'),
             ('ALIGN', (2,0), (2,0), 'RIGHT'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
-            ('LEFTPADDING', (0,0), (-1,-1), 10),
-            ('RIGHTPADDING', (0,0), (-1,-1), 10),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING', (0,0), (-1,-1), 8),
+            ('RIGHTPADDING', (0,0), (-1,-1), 8),
         ]))
         story.append(banner_table)
-        story.append(Spacer(1, 12))
+        story.append(Spacer(1, 14))
     except Exception:
         pass
 
-    # Tablo İçi Metin Stilleri
-    th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=8, textColor=colors.white, alignment=1)
-    td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#2C3E50'), alignment=1)
-    td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#1A2B4C'), alignment=1)
-    st_title = ParagraphStyle('SubTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1A2B4C'), spaceAfter=5)
+    # Tablo Metin Stilleri
+    th_style = ParagraphStyle('TH', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.white, alignment=1, leading=9)
+    td_style = ParagraphStyle('TD', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#1E293B'), alignment=1, leading=10)
+    td_bold = ParagraphStyle('TDBold', fontName=FONT_BOLD, fontSize=8, textColor=colors.HexColor('#0F172A'), alignment=1, leading=10)
+    section_title = ParagraphStyle('SecTitle', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#1B2A47'), spaceAfter=5)
 
-    # Tablo 1: Parsel Bazlı Detay Tablosu
-    story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", st_title))
+    # Tablo 1: Parsel Bazlı Detay Tablosu (Genişlik Hizasında Düzenlendi)
+    story.append(Paragraph("1. PARSEL BAZLI DETAY TABLOSU", section_title))
 
     headers_t1 = [
         Paragraph("MAHALLE", th_style),
@@ -277,9 +286,9 @@ def yatay_kurumsal_pdf_olustur():
     ]
 
     row_t1 = [
-        Paragraph(mahalle, td_style),
-        Paragraph(ada, td_style),
-        Paragraph(parsel, td_style),
+        Paragraph(mahalle.upper(), td_style),
+        Paragraph(str(ada), td_style),
+        Paragraph(str(parsel), td_style),
         Paragraph(nitelik, td_style),
         Paragraph(f"{tapu_alani:,.2f}", td_style),
         Paragraph(f"{net_alan:,.2f}", td_style),
@@ -289,19 +298,21 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
 
-    table1 = Table([headers_t1, row_t1], colWidths=[80, 50, 50, 75, 95, 85, 115, 45, 95, 102])
+    # Toplam genişlik A4 Yatay Yazdırılabilir Alanı (802 pt) ile Tam Birebir Eşleşir
+    table1 = Table([headers_t1, row_t1], colWidths=[80, 45, 45, 70, 95, 90, 125, 45, 100, 107])
     table1.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A2B4C')),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A47')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('PADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
         ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
     ]))
     story.append(table1)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 14))
 
-    # Tablo 2: Mimari Potansiyel & Finansal Özet Tablosu
-    story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", st_title))
+    # Tablo 2: Mimari Potansiyel & Finansal Özellikler Tablosu
+    story.append(Paragraph("2. MİMARİ POTANSİYEL VE FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)", section_title))
 
     headers_t2 = [
         Paragraph("YAPI TİPOLOJİSİ", th_style),
@@ -310,7 +321,7 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph("M² MALİYET ($)", th_style),
         Paragraph("TOPLAM MALİYET ($)", th_style),
         Paragraph("M² SATIŞ ($)", th_style),
-        Paragraph("TOPLAM CIRO ($)", th_style),
+        Paragraph("TOPLAM CİRO ($)", th_style),
         Paragraph("NET KAR MARJI ($)", th_style)
     ]
 
@@ -325,19 +336,20 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph(f"${mutaahhit_net_kar_usd:,.0f}", td_bold)
     ]
 
-    table2 = Table([headers_t2, row_t2], colWidths=[110, 80, 95, 80, 105, 80, 115, 127])
+    table2 = Table([headers_t2, row_t2], colWidths=[110, 80, 95, 80, 110, 80, 120, 127])
     table2.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2C3E50')),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2A3B5C')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('PADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
         ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
     ]))
     story.append(table2)
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 16))
 
-    # Alt Bilgi ve İletişim
-    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=8, textColor=colors.HexColor('#475569'), leading=11)
+    # Alt Bilgi ve İletişim Metni
+    footer_style = ParagraphStyle('Footer', fontName=FONT_NAME, fontSize=7.5, textColor=colors.HexColor('#475569'), leading=11)
     iletisim = f"<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | " \
                f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>" \
                f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL"
@@ -347,7 +359,7 @@ def yatay_kurumsal_pdf_olustur():
     buffer.seek(0)
     return buffer
 
-# Kurumsal Dosya Adı Yapılandırması
+# Kurumsal Dosya Adı Yapısı
 clean_mahalle = re.sub(r'[^\w\s-]', '', mahalle).strip().replace(" ", "_")
 kurumsal_dosya_adi = f"ISTESTATE_MERIC_Fizibilite_Raporu_{clean_mahalle}_{ada}_{parsel}_2026.pdf"
 
