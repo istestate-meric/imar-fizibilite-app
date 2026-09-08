@@ -22,57 +22,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS - Modern & Profesyonel Arayüz Tasarımı
+# Custom CSS
 st.markdown("""
 <style>
-    .main {
-        background-color: #0F172A;
-    }
-    section[data-testid="stSidebar"] {
-        background-color: #1E293B !important;
-        border-right: 1px solid #334155;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 24px !important;
-        font-weight: 700 !important;
-        color: #38BDF8 !important;
-    }
-    div[data-testid="stMetric"] {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #1E293B;
-        border-radius: 8px 8px 0px 0px;
-        padding: 10px 20px;
-        color: #94A3B8;
-        border: 1px solid #334155;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #2563EB !important;
-        color: #FFFFFF !important;
-        border-color: #2563EB !important;
-    }
-    .stDownloadButton > button {
-        width: 100%;
-        background-color: #059669 !important;
-        color: white !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-        padding: 12px 24px !important;
-        border: none !important;
-        transition: all 0.3s ease;
-    }
-    .stDownloadButton > button:hover {
-        background-color: #10B981 !important;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-    }
+    .main { background-color: #0F172A; }
+    section[data-testid="stSidebar"] { background-color: #1E293B !important; border-right: 1px solid #334155; }
+    div[data-testid="stMetricValue"] { font-size: 24px !important; font-weight: 700 !important; color: #38BDF8 !important; }
+    div[data-testid="stMetric"] { background-color: #1E293B; border: 1px solid #334155; border-radius: 10px; padding: 15px; }
+    .stTabs [data-baseweb="tab"] { background-color: #1E293B; border-radius: 8px 8px 0px 0px; padding: 10px 20px; color: #94A3B8; border: 1px solid #334155; }
+    .stTabs [aria-selected="true"] { background-color: #2563EB !important; color: #FFFFFF !important; border-color: #2563EB !important; }
+    .stDownloadButton > button { width: 100%; background-color: #059669 !important; color: white !important; font-weight: 600 !important; border-radius: 8px !important; padding: 12px 24px !important; border: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,7 +51,8 @@ def get_tcmb_usd_rate():
     except Exception:
         return 34.50
 
-# Gemini API ile Mahalle Bazlı Canlı İnternet Arama / Fiyat Tahmin Fonksiyonu
+# Gemini API ile Canlı İnternet Arama / Fiyat Tahmin Fonksiyonu
+@st.cache_data(ttl=1800)
 def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
     try:
         genai.configure(api_key=api_key)
@@ -100,16 +60,14 @@ def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
         
         prompt = f"""
         İstanbul Beykoz {mahalle_adi} mahallesi için güncel gayrimenkul piyasası koşullarında:
-        1. Yapı Tipolojisi: {tipoloji}
+        Yapı Tipolojisi: {tipoloji}
         
         Aşağıdaki verileri tahmin/araştırma bazlı belirle ve SADECE saf JSON olarak döndür:
-        - maliyet_usd (M² inşaat maliyeti Dolar USD cinsinden, örn: 1200)
-        - satis_usd (M² satış fiyatı Dolar USD cinsinden, örn: 4500)
+        - maliyet_usd (M² inşaat maliyeti USD cinsinden, örn: 1200)
+        - satis_usd (M² satış fiyatı USD cinsinden, örn: 4500)
 
-        Örnek JSON formatı:
-        {{"maliyet_usd": 1250, "satis_usd": 5200}}
+        JSON formatı: {{"maliyet_usd": 1250, "satis_usd": 5200}}
         """
-        
         response = model.generate_content(prompt)
         clean_json = re.search(r'\{.*\}', response.text, re.DOTALL)
         if clean_json:
@@ -118,7 +76,7 @@ def fetch_market_prices_via_gemini(mahalle_adi, tipoloji, api_key):
         pass
     return None
 
-# Türkçe Karakter Garanti Yükleme Sistemi
+# Türkçe Karakter Yükleme Sistemi
 @st.cache_resource
 def setup_tr_fonts():
     urls = [
@@ -142,11 +100,7 @@ FONT_NAME, FONT_BOLD = setup_tr_fonts()
 def tr_fix(text):
     if FONT_NAME is not None:
         return str(text)
-    mapping = {
-        'İ': 'I', 'I': 'I', 'ı': 'i', 'Ş': 'S', 'ş': 's',
-        'Ğ': 'G', 'ğ': 'g', 'Ç': 'C', 'ç': 'c', 'Ö': 'O',
-        'ö': 'o', 'Ü': 'U', 'ü': 'u'
-    }
+    mapping = {'İ': 'I', 'I': 'I', 'ı': 'i', 'Ş': 'S', 'ş': 's', 'Ğ': 'G', 'ğ': 'g', 'Ç': 'C', 'ç': 'c', 'Ö': 'O', 'ö': 'o', 'Ü': 'U', 'ü': 'u'}
     text_str = str(text)
     for k, v in mapping.items():
         text_str = text_str.replace(k, v)
@@ -168,12 +122,11 @@ if "parsel" not in st.session_state: st.session_state.parsel = "1"
 if "tapu_alani" not in st.session_state: st.session_state.tapu_alani = 6721.92
 if "kaks" not in st.session_state: st.session_state.kaks = 0.45
 if "taks" not in st.session_state: st.session_state.taks = 0.30
-if "auto_maliyet_usd" not in st.session_state: st.session_state.auto_maliyet_usd = 1200
-if "auto_satis_usd" not in st.session_state: st.session_state.auto_satis_usd = 5000
+if "last_uploaded_filename" not in st.session_state: st.session_state.last_uploaded_filename = None
+if "last_searched_key" not in st.session_state: st.session_state.last_searched_key = None
 
-# ÜST HEADER BANNER (Çift Logo & Başlık)
+# ÜST HEADER BANNER
 col_header1, col_header2, col_header3 = st.columns([1.5, 4, 1.5])
-
 with col_header1:
     try: st.image("istestate_logo.png", use_container_width=True)
     except Exception: st.caption("istestate_logo.png yüklenemedi")
@@ -195,15 +148,16 @@ st.divider()
 
 # SOL PANEL (Girdiler)
 with st.sidebar:
-    st.markdown("### 📄 1. Belge ile Otomatik Analiz")
+    st.markdown("### 📄 1. Belge Analizi (Otomatik)")
     uploaded_pdf = st.file_uploader("İmar Durumu PDF Raporu Yükleyin", type=["pdf"])
 
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
 
+    # AUTOMATIC PDF EXTRACTION
     if uploaded_pdf is not None and gemini_api_key:
-        if st.button("⚡ PDF Verilerini Forma Aktar"):
-            with st.spinner("PDF Analiz Ediliyor..."):
+        if st.session_state.last_uploaded_filename != uploaded_pdf.name:
+            with st.spinner("PDF Otomatik Analiz Ediliyor..."):
                 try:
                     with pdfplumber.open(uploaded_pdf) as pdf:
                         extracted_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
@@ -235,7 +189,8 @@ with st.sidebar:
                         st.session_state.tapu_alani = float(data.get("tapu_alani", st.session_state.tapu_alani))
                         st.session_state.kaks = float(data.get("kaks", st.session_state.kaks))
                         st.session_state.taks = float(data.get("taks", st.session_state.taks))
-                        st.success("Bilgiler aktarıldı!")
+                        st.session_state.last_uploaded_filename = uploaded_pdf.name
+                        st.toast("PDF Verileri Otomatik Aktarıldı!", icon="⚡")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Hata: {e}")
@@ -263,28 +218,26 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💰 3. Finansal Parametreler ($ USD)")
 
-    # OTOMATİK VERİ ÇEKME BUTONU (Gemini + TCMB)
-    if st.button("🌐 İnternetten Güncel Piyasa Fiyatlarını Çek"):
-        with st.spinner("TCMB Kuru ve Mahalle Piyasa Verileri Çekiliyor..."):
-            usd_rate = get_tcmb_usd_rate()
-            market_data = fetch_market_prices_via_gemini(mahalle, yapi_tipolojisi, gemini_api_key) if gemini_api_key else None
+    # AUTOMATIC MARKET PRICE FETCHING
+    current_search_key = f"{mahalle}_{yapi_tipolojisi}"
+    if st.session_state.last_searched_key != current_search_key:
+        usd_rate = get_tcmb_usd_rate()
+        market_data = fetch_market_prices_via_gemini(mahalle, yapi_tipolojisi, gemini_api_key) if gemini_api_key else None
+        
+        if market_data and "maliyet_usd" in market_data and "satis_usd" in market_data:
+            st.session_state.auto_maliyet_usd = int(market_data["maliyet_usd"])
+            st.session_state.auto_satis_usd = int(market_data["satis_usd"])
+        else:
+            maliyet_tl = 48000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 38000
+            satis_tl = 185000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 140000
+            st.session_state.auto_maliyet_usd = int(maliyet_tl / usd_rate)
+            st.session_state.auto_satis_usd = int(satis_tl / usd_rate)
             
-            if market_data and "maliyet_usd" in market_data and "satis_usd" in market_data:
-                st.session_state.auto_maliyet_usd = int(market_data["maliyet_usd"])
-                st.session_state.auto_satis_usd = int(market_data["satis_usd"])
-                st.success(f"{mahalle} bölgesi piyasa verileri çekildi! (TCMB: 1 USD = {usd_rate:.2f} TL)")
-            else:
-                # Standart dinamik hesaplama yedekleme
-                maliyet_tl = 48000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 38000
-                satis_tl = 185000 if yapi_tipolojisi in ["Müstakil Villa", "İkiz Villa"] else 140000
-                st.session_state.auto_maliyet_usd = int(maliyet_tl / usd_rate)
-                st.session_state.auto_satis_usd = int(satis_tl / usd_rate)
-                st.info(f"TCMB Kuru (1 USD = {usd_rate:.2f} TL) üzerinden ortalama veriler güncellendi.")
-            st.rerun()
+        st.session_state.last_searched_key = current_search_key
 
     # DİLEĞE GÖRE MANUEL DEĞİŞTİRİLEBİLİR INPUT ALANLARI
-    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=st.session_state.auto_maliyet_usd, step=50)
-    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=st.session_state.auto_satis_usd, step=100)
+    birim_maliyeti_usd = st.number_input("M² İnşaat Maliyeti ($)", value=st.session_state.get("auto_maliyet_usd", 1200), step=50)
+    satis_m2_fiyati_usd = st.number_input("M² Satış Fiyatı ($)", value=st.session_state.get("auto_satis_usd", 5000), step=100)
     kat_karsiligi_orani = st.slider("Kat Karşılığı Payı (%)", 30, 60, 50) if sunum_tipi == "Kat Karşılığı" else 50
     unite_m2 = st.number_input("Ortalama Ünite Brüt m²", value=200, step=10)
 
@@ -364,10 +317,7 @@ def yatay_kurumsal_pdf_olustur():
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=landscape(A4), 
-        rightMargin=20, 
-        leftMargin=20, 
-        topMargin=20, 
-        bottomMargin=20
+        rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20
     )
     story = []
 
@@ -383,22 +333,10 @@ def yatay_kurumsal_pdf_olustur():
         img_mer = RLImage("meric_insaat_emlak_logo.png", width=150, height=42)
         
         box_ist = Table([[img_ist]], colWidths=[146])
-        box_ist.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 3),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-        ]))
+        box_ist.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.white), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3)]))
 
         box_mer = Table([[img_mer]], colWidths=[156])
-        box_mer.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 3),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-        ]))
+        box_mer.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.white), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3)]))
 
         banner_text = Paragraph(
             f"<b>{tr_fix('İSTESTATE & MERİÇ İNŞAAT EMLAK')}</b><br/>"
@@ -409,12 +347,8 @@ def yatay_kurumsal_pdf_olustur():
         banner_table = Table([[box_ist, banner_text, box_mer]], colWidths=[156, 490, 156])
         banner_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1B2A47')),
-            ('ALIGN', (0,0), (0,0), 'LEFT'),
-            ('ALIGN', (1,0), (1,0), 'CENTER'),
-            ('ALIGN', (2,0), (2,0), 'RIGHT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('ALIGN', (0,0), (0,0), 'LEFT'), ('ALIGN', (1,0), (1,0), 'CENTER'), ('ALIGN', (2,0), (2,0), 'RIGHT'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5)
         ]))
         story.append(banner_table)
         story.append(Spacer(1, 10))
@@ -424,37 +358,21 @@ def yatay_kurumsal_pdf_olustur():
     # TABLO 1: İMAR VE KAPASİTE
     story.append(Paragraph(tr_fix("1. PARSEL BAZLI İMAR VE KAPASİTE TABLOSU"), section_title))
     headers_t1 = [
-        Paragraph(tr_fix("MAHALLE"), th_style),
-        Paragraph(tr_fix("ADA"), th_style),
-        Paragraph(tr_fix("PARSEL"), th_style),
-        Paragraph(tr_fix("NİTELİK"), th_style),
-        Paragraph(tr_fix("PARSEL ALANI (M²)"), th_style),
-        Paragraph(tr_fix("NET ALAN (M²)"), th_style),
-        Paragraph(tr_fix("FONKSİYON"), th_style),
-        Paragraph(tr_fix("KAKS"), th_style),
-        Paragraph(tr_fix("NET İNŞAAT (M²)"), th_style),
-        Paragraph(tr_fix("BRÜT İNŞAAT (M²)"), th_style)
+        Paragraph(tr_fix("MAHALLE"), th_style), Paragraph(tr_fix("ADA"), th_style), Paragraph(tr_fix("PARSEL"), th_style),
+        Paragraph(tr_fix("NİTELİK"), th_style), Paragraph(tr_fix("PARSEL ALANI (M²)"), th_style), Paragraph(tr_fix("NET ALAN (M²)"), th_style),
+        Paragraph(tr_fix("FONKSİYON"), th_style), Paragraph(tr_fix("KAKS"), th_style), Paragraph(tr_fix("NET İNŞAAT (M²)"), th_style), Paragraph(tr_fix("BRÜT İNŞAAT (M²)"), th_style)
     ]
     row_t1 = [
-        Paragraph(tr_fix(mahalle), td_style),
-        Paragraph(tr_fix(str(ada)), td_style),
-        Paragraph(tr_fix(str(parsel)), td_style),
-        Paragraph(tr_fix(nitelik), td_style),
-        Paragraph(f"{tapu_alani:,.2f}", td_style),
-        Paragraph(f"{net_alan:,.2f}", td_style),
-        Paragraph(tr_fix(imar_fonksiyonu), td_style),
-        Paragraph(f"{kaks:.2f}", td_style),
-        Paragraph(f"{net_emsal_alani:,.2f}", td_style),
-        Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
+        Paragraph(tr_fix(mahalle), td_style), Paragraph(tr_fix(str(ada)), td_style), Paragraph(tr_fix(str(parsel)), td_style),
+        Paragraph(tr_fix(nitelik), td_style), Paragraph(f"{tapu_alani:,.2f}", td_style), Paragraph(f"{net_alan:,.2f}", td_style),
+        Paragraph(tr_fix(imar_fonksiyonu), td_style), Paragraph(f"{kaks:.2f}", td_style), Paragraph(f"{net_emsal_alani:,.2f}", td_style), Paragraph(f"{toplam_brut_insaat:,.2f}", td_bold)
     ]
     table1 = Table([headers_t1, row_t1], colWidths=[80, 45, 45, 70, 95, 90, 125, 45, 100, 107])
     table1.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A47')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC'))
     ]))
     story.append(table1)
     story.append(Spacer(1, 10))
@@ -462,29 +380,19 @@ def yatay_kurumsal_pdf_olustur():
     # TABLO 2: MİMARİ POTANSİYEL
     story.append(Paragraph(tr_fix("2. MİMARİ POTANSİYEL VE YAPILAŞMA ANALİZİ"), section_title))
     headers_t2 = [
-        Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style),
-        Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style),
-        Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
-        Paragraph(tr_fix("TAKS (TABAN KATSAYISI)"), th_style),
-        Paragraph(tr_fix("MAX TABAN OTURUMU (M²)"), th_style),
-        Paragraph(tr_fix("%30 İLAVE EMSAL HARİCİ (M²)"), th_style)
+        Paragraph(tr_fix("YAPI TİPOLOJİSİ"), th_style), Paragraph(tr_fix("ORTALAMA ÜNİTE BRÜT M²"), th_style), Paragraph(tr_fix("TAHMİNİ ÜNİTE ADEDİ"), th_style),
+        Paragraph(tr_fix("TAKS (TABAN KATSAYISI)"), th_style), Paragraph(tr_fix("MAX TABAN OTURUMU (M²)"), th_style), Paragraph(tr_fix("%30 İLAVE EMSAL HARİCİ (M²)"), th_style)
     ]
     row_t2 = [
-        Paragraph(tr_fix(yapi_tipolojisi), td_style),
-        Paragraph(f"{unite_m2} m²", td_style),
-        Paragraph(f"~{toplam_unite_adedi} Adet", td_bold),
-        Paragraph(f"{taks:.2f}", td_style),
-        Paragraph(f"{max_taban_alani:,.2f} m²", td_style),
-        Paragraph(f"{ilave_emsal_harici:,.2f} m²", td_style)
+        Paragraph(tr_fix(yapi_tipolojisi), td_style), Paragraph(f"{unite_m2} m²", td_style), Paragraph(f"~{toplam_unite_adedi} Adet", td_bold),
+        Paragraph(f"{taks:.2f}", td_style), Paragraph(f"{max_taban_alani:,.2f} m²", td_style), Paragraph(f"{ilave_emsal_harici:,.2f} m²", td_style)
     ]
     table2 = Table([headers_t2, row_t2], colWidths=[150, 130, 120, 120, 140, 142])
     table2.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2A3B5C')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC'))
     ]))
     story.append(table2)
     story.append(Spacer(1, 10))
@@ -492,27 +400,19 @@ def yatay_kurumsal_pdf_olustur():
     # TABLO 3: FİNANSAL FİZİBİLİTE
     story.append(Paragraph(tr_fix("3. FİNANSAL FİZİBİLİTE ANALİZİ ($ USD)"), section_title))
     headers_t3 = [
-        Paragraph(tr_fix("M² İNŞAAT MALİYETİ ($)"), th_style),
-        Paragraph(tr_fix("TOPLAM İNŞAAT MALİYETİ ($)"), th_style),
-        Paragraph(tr_fix("M² SATIŞ FİYATI ($)"), th_style),
-        Paragraph(tr_fix("TOPLAM PROJE CİROSU ($)"), th_style),
-        Paragraph(tr_fix("TAHMİNİ NET KAR MARJI ($)"), th_style)
+        Paragraph(tr_fix("M² İNŞAAT MALİYETİ ($)"), th_style), Paragraph(tr_fix("TOPLAM İNŞAAT MALİYETİ ($)"), th_style),
+        Paragraph(tr_fix("M² SATIŞ FİYATI ($)"), th_style), Paragraph(tr_fix("TOPLAM PROJE CİROSU ($)"), th_style), Paragraph(tr_fix("TAHMİNİ NET KAR MARJI ($)"), th_style)
     ]
     row_t3 = [
-        Paragraph(f"${birim_maliyeti_usd:,.0f}", td_style),
-        Paragraph(f"${toplam_insaat_maliyeti_usd:,.0f}", td_style),
-        Paragraph(f"${satis_m2_fiyati_usd:,.0f}", td_style),
-        Paragraph(f"${toplam_proje_geliri_usd:,.0f}", td_style),
-        Paragraph(f"${mutaahhit_net_kar_usd:,.0f}", td_bold)
+        Paragraph(f"${birim_maliyeti_usd:,.0f}", td_style), Paragraph(f"${toplam_insaat_maliyeti_usd:,.0f}", td_style),
+        Paragraph(f"${satis_m2_fiyati_usd:,.0f}", td_style), Paragraph(f"${toplam_proje_geliri_usd:,.0f}", td_style), Paragraph(f"${mutaahhit_net_kar_usd:,.0f}", td_bold)
     ]
     table3 = Table([headers_t3, row_t3], colWidths=[150, 160, 150, 170, 172])
     table3.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC'))
     ]))
     story.append(table3)
     story.append(Spacer(1, 10))
@@ -521,36 +421,21 @@ def yatay_kurumsal_pdf_olustur():
     if sunum_tipi == "Kat Karşılığı":
         story.append(Paragraph(tr_fix(f"4. KAT KARŞILIĞI PAYLAŞIM DETAYLARI (%{kat_karsiligi_orani} ARSA / %{100-kat_karsiligi_orani} MÜTEAHHİT)"), section_title))
         headers_t4 = [
-            Paragraph(tr_fix("PAYDAŞ"), th_style),
-            Paragraph(tr_fix("PAY ORANI (%)"), th_style),
-            Paragraph(tr_fix("KALAN BRÜT İNŞAAT ALANI (M²)"), th_style),
-            Paragraph(tr_fix("TAHMİNİ BAĞIMSIZ BÖLÜM ADEDİ"), th_style)
+            Paragraph(tr_fix("PAYDAŞ"), th_style), Paragraph(tr_fix("PAY ORANI (%)"), th_style),
+            Paragraph(tr_fix("KALAN BRÜT İNŞAAT ALANI (M²)"), th_style), Paragraph(tr_fix("TAHMİNİ BAĞIMSIZ BÖLÜM ADEDİ"), th_style)
         ]
-        row_t4_1 = [
-            Paragraph(tr_fix("Arsa Sahibi Payı"), td_style),
-            Paragraph(f"%{kat_karsiligi_orani}", td_style),
-            Paragraph(f"{arsa_sahibi_payi_m2:,.2f} m²", td_style),
-            Paragraph(f"~{arsa_sahibi_unite_adedi} Adet", td_bold)
-        ]
-        row_t4_2 = [
-            Paragraph(tr_fix("Müteahhit Payı"), td_style),
-            Paragraph(f"%{100-kat_karsiligi_orani}", td_style),
-            Paragraph(f"{mutaahhit_payi_m2:,.2f} m²", td_style),
-            Paragraph(f"~{mutaahhit_unite_adedi} Adet", td_bold)
-        ]
+        row_t4_1 = [Paragraph(tr_fix("Arsa Sahibi Payı"), td_style), Paragraph(f"%{kat_karsiligi_orani}", td_style), Paragraph(f"{arsa_sahibi_payi_m2:,.2f} m²", td_style), Paragraph(f"~{arsa_sahibi_unite_adedi} Adet", td_bold)]
+        row_t4_2 = [Paragraph(tr_fix("Müteahhit Payı"), td_style), Paragraph(f"%{100-kat_karsiligi_orani}", td_style), Paragraph(f"{mutaahhit_payi_m2:,.2f} m²", td_style), Paragraph(f"~{mutaahhit_unite_adedi} Adet", td_bold)]
         table4 = Table([headers_t4, row_t4_1, row_t4_2], colWidths=[180, 150, 230, 242])
         table4.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#334155')),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#F8FAFC')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#F8FAFC'))
         ]))
         story.append(table4)
         story.append(Spacer(1, 10))
 
-    # Alt Bilgi
     iletisim = tr_fix("<b>İstestate Meriç Gayrimenkul Danışmanlık & Meriç İnşaat Emlak</b> | ") + \
                tr_fix(f"Umutcan K. MERİÇ (0539 451 61 61) - Süleyman MERİÇ (0532 695 10 83)<br/>") + \
                tr_fix(f"<b>Adres:</b> Çiftlik Mah. Çavuşbaşı Cumhuriyet Cad. No:171/3 Beykoz/İSTANBUL")
