@@ -99,11 +99,10 @@ def clean_mahalle_name(name):
     return cleaned if cleaned else name.strip()
 
 
-# GEMINI LIMIT AŞIMINDA OTOMATİK YEDEK PARSER (LOCAL REGEX - GÜNCELLENDİ)
+# LOCAL REGEX PARSER (GÜNCELLENDİ)
 def fallback_regex_parser(extracted_text):
     data = {}
 
-    # Dynamic Mahalle Parsing (Handles ÇİFTLİK and others properly)
     mahalle_match = re.search(
         r"Mahalle\s*[\n\r:]*\s*([A-ZÇĞİÖŞÜa-zçğıöşü\s]+?)(?=\s*Pafta|\s*\n|\s*\||$)",
         extracted_text,
@@ -148,7 +147,6 @@ def fallback_regex_parser(extracted_text):
     if fonks_match:
         data["imar_fonksiyonu"] = fonks_match.group(1).strip()
 
-    # Net Konut ve Park/Terk Alanı Ayrıştırma
     konut_match = re.search(
         r"KONUT ALANI[\s\S]*?Fonksiyon Alanına\s*Giren[\s\S]*?(?:%\s*([\d\.,]+))?[\s\S]*?([\d\.,]+)\s*m²",
         extracted_text,
@@ -178,11 +176,6 @@ def fallback_regex_parser(extracted_text):
         except Exception:
             pass
 
-    # Otomatik Net Oran Hesabı
-    if data.get("tapu_alani") and data["tapu_alani"] > 0:
-        if data.get("net_konut_alani") and not data.get("net_konut_orani"):
-            data["net_konut_orani"] = round((data["net_konut_alani"] / data["tapu_alani"]) * 100, 2)
-
     return data
 
 
@@ -192,12 +185,12 @@ def parse_pdf_with_gemini_retry(pdf_text, api_key, max_retries=3):
 
     prompt = f"""
     Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
-    - mahalle (metin, 'Mahalle' etiketli alandaki tam mahalle adını al. Örn: ÇİFTLİK)
+    - mahalle (metin, 'Mahalle' etiketli alandaki tam mahalle adını al)
     - ada (metin)
     - parsel (metin)
     - tapu_alani (sayı, Toplam / Brüt parsel alanı)
     - net_konut_alani (sayı, 'KONUT ALANI' karşısındaki m² değeri)
-    - net_konut_orani (sayı, Konut alanının yüzde oranı, örn: 74.74)
+    - net_konut_orani (sayı, Konut alanının yüzde oranı)
     - park_terk_alani (sayı, varsa PARK / Terk m² değeri, yoksa 0)
     - kaks (sayı, Emsal)
     - taks (sayı)
@@ -237,6 +230,7 @@ def init_db():
                 net_konut_alani REAL,
                 net_konut_orani REAL,
                 park_terk_alani REAL,
+                terk_yapilmis INTEGER DEFAULT 0,
                 kaks REAL,
                 taks REAL,
                 imar_fonksiyonu TEXT,
@@ -247,7 +241,6 @@ def init_db():
         cursor.execute("PRAGMA table_info(imar_kayitlari)")
         columns = [column[1] for column in cursor.fetchall()]
         
-        # Eksik sütunları ekle (Şema Güncellemesi)
         if "imar_fonksiyonu" not in columns:
             cursor.execute("ALTER TABLE imar_kayitlari ADD COLUMN imar_fonksiyonu TEXT")
         if "net_konut_alani" not in columns:
@@ -256,6 +249,8 @@ def init_db():
             cursor.execute("ALTER TABLE imar_kayitlari ADD COLUMN net_konut_orani REAL DEFAULT 0.0")
         if "park_terk_alani" not in columns:
             cursor.execute("ALTER TABLE imar_kayitlari ADD COLUMN park_terk_alani REAL DEFAULT 0.0")
+        if "terk_yapilmis" not in columns:
+            cursor.execute("ALTER TABLE imar_kayitlari ADD COLUMN terk_yapilmis INTEGER DEFAULT 0")
 
         conn.commit()
         conn.close()
@@ -267,7 +262,7 @@ init_db()
 
 
 def db_kayit_ekle_veya_guncelle(
-    mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, kaks, taks, imar_fonksiyonu
+    mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, terk_yapilmis, kaks, taks, imar_fonksiyonu
 ):
     try:
         conn = sqlite3.connect("imar_hafizasi.db")
@@ -275,13 +270,14 @@ def db_kayit_ekle_veya_guncelle(
         sade_mahalle = clean_mahalle_name(mahalle).upper()
         cursor.execute(
             """
-            INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, kaks, taks, imar_fonksiyonu)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO imar_kayitlari (mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, terk_yapilmis, kaks, taks, imar_fonksiyonu)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(mahalle, ada, parsel) DO UPDATE SET
                 tapu_alani=excluded.tapu_alani,
                 net_konut_alani=excluded.net_konut_alani,
                 net_konut_orani=excluded.net_konut_orani,
                 park_terk_alani=excluded.park_terk_alani,
+                terk_yapilmis=excluded.terk_yapilmis,
                 kaks=excluded.kaks,
                 taks=excluded.taks,
                 imar_fonksiyonu=excluded.imar_fonksiyonu
@@ -294,6 +290,7 @@ def db_kayit_ekle_veya_guncelle(
                 float(net_konut_alani or 0.0),
                 float(net_konut_orani or 0.0),
                 float(park_terk_alani or 0.0),
+                int(1 if terk_yapilmis else 0),
                 float(kaks or 0.0),
                 float(taks or 0.0),
                 str(imar_fonksiyonu),
@@ -326,7 +323,7 @@ def db_kayit_sorgula(ada, parsel):
 
         cursor.execute(
             """
-            SELECT mahalle, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, kaks, taks, imar_fonksiyonu 
+            SELECT mahalle, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, terk_yapilmis, kaks, taks, imar_fonksiyonu 
             FROM imar_kayitlari 
             WHERE CAST(ada AS TEXT) = ? 
               AND CAST(parsel AS TEXT) = ?
@@ -379,6 +376,7 @@ def get_birlesik_parsel_verisi(record_ids):
         "net_konut_alani": toplam_net_konut,
         "net_konut_orani": net_oranh_ort,
         "park_terk_alani": toplam_park,
+        "terk_yapilmis": df["terk_yapilmis"].iloc[0] if "terk_yapilmis" in df else 0,
         "kaks": agirlikli_kaks,
         "taks": agirlikli_taks,
         "imar_fonksiyonu": (
@@ -519,6 +517,8 @@ if "net_konut_orani" not in st.session_state:
     st.session_state.net_konut_orani = 74.74
 if "park_terk_alani" not in st.session_state:
     st.session_state.park_terk_alani = 369.62
+if "terk_yapilmis" not in st.session_state:
+    st.session_state.terk_yapilmis = False
 if "kaks" not in st.session_state:
     st.session_state.kaks = 0.30
 if "taks" not in st.session_state:
@@ -620,15 +620,27 @@ with st.sidebar:
                                     "tapu_alani", st.session_state.tapu_alani
                                 )
                             )
-                            st.session_state.net_konut_alani = float(
-                                data.get("net_konut_alani", st.session_state.tapu_alani * 0.70)
-                            )
-                            st.session_state.net_konut_orani = float(
-                                data.get("net_konut_orani", 70.0)
-                            )
                             st.session_state.park_terk_alani = float(
                                 data.get("park_terk_alani", 0.0)
                             )
+                            
+                            # Net ve Terk Mantığı Otomatik Hesaplama
+                            terk_yapilmis_mi = st.session_state.terk_yapilmis
+                            if terk_yapilmis_mi:
+                                st.session_state.net_konut_alani = st.session_state.tapu_alani
+                            else:
+                                raw_net = data.get("net_konut_alani")
+                                if raw_net and float(raw_net) > 0:
+                                    st.session_state.net_konut_alani = float(raw_net)
+                                else:
+                                    # Terk yapılmamışsa, terk dışındaki kalan alan doğrudan net kullanılabilir kabul edilir
+                                    st.session_state.net_konut_alani = max(0.0, st.session_state.tapu_alani - st.session_state.park_terk_alani)
+
+                            st.session_state.net_konut_orani = (
+                                (st.session_state.net_konut_alani / st.session_state.tapu_alani * 100)
+                                if st.session_state.tapu_alani > 0 else 100.0
+                            )
+
                             st.session_state.kaks = float(
                                 data.get("kaks", st.session_state.kaks)
                             )
@@ -650,6 +662,7 @@ with st.sidebar:
                                 st.session_state.net_konut_alani,
                                 st.session_state.net_konut_orani,
                                 st.session_state.park_terk_alani,
+                                st.session_state.terk_yapilmis,
                                 st.session_state.kaks,
                                 st.session_state.taks,
                                 st.session_state.imar_fonksiyonu,
@@ -686,6 +699,7 @@ with st.sidebar:
                 kayitli_net_konut,
                 kayitli_net_oran,
                 kayitli_park,
+                kayitli_terk_yapilmis,
                 kayitli_kaks,
                 kayitli_taks,
                 kayitli_imar_fonks,
@@ -714,6 +728,7 @@ with st.sidebar:
             st.session_state.net_konut_alani = kayitli_net_konut
             st.session_state.net_konut_orani = kayitli_net_oran
             st.session_state.park_terk_alani = kayitli_park
+            st.session_state.terk_yapilmis = bool(kayitli_terk_yapilmis)
             st.session_state.kaks = kayitli_kaks
             st.session_state.taks = kayitli_taks
             if kayitli_imar_fonks:
@@ -800,27 +815,46 @@ with st.sidebar:
             "Toplam Ortak Havuz Alanı (m²)", value=120.0, step=10.0
         )
 
+    # TERK VE ARAZİ AYRIMI SEÇİMİ
+    st.markdown("#### 📐 Arazi & Terk Durumu")
+    terk_durumu_secimi = st.radio(
+        "Arazi Terk Statüsü:",
+        ["Terk Yapılmamış (Brüt Arazi)", "Terk Yapılmış (Net Arazi)"],
+        index=1 if st.session_state.terk_yapilmis else 0,
+        help="Terk yapılmış araziler doğrudan net kabul edilir. Terk yapılmamış arazilerde, rapordaki terk alanları düşülür; terk dışındaki alan oran ne olursa olsun kullanılabilir arsa sayılır."
+    )
+    terk_yapilmis = terk_durumu_secimi == "Terk Yapılmış (Net Arazi)"
+    st.session_state.terk_yapilmis = terk_yapilmis
+
     tapu_alani = st.number_input(
-        "Brüt Tapu Alanı (m²)",
+        "Brüt Tapu Alanı (m²)" if not terk_yapilmis else "Net Tapu Alanı (m²)",
         value=float(st.session_state.tapu_alani),
         step=10.0,
     )
-    net_konut_alani = st.number_input(
-        "Net Konut Alanı (m²)",
-        value=float(st.session_state.net_konut_alani),
-        step=10.0,
-    )
     park_terk_alani = st.number_input(
-        "Park / Terk Alanı (m²)",
+        "Park / Kamu Terk Alanı (m²)",
         value=float(st.session_state.park_terk_alani),
         step=10.0,
+        disabled=terk_yapilmis
     )
-    
-    net_konut_orani = (net_konut_alani / tapu_alani * 100) if tapu_alani > 0 else 0.0
-    st.caption(f"📐 Hesaplanan Konut Payı Oranı: **%{net_konut_orani:.2f}**")
 
-    nitelik = st.selectbox("Nitelik", ["Bahçe", "Arsa", "Tarla"])
-    terk_durumu = st.checkbox("18. Madde Terki Yapıldı mı?", value=False)
+    # Terk Yapılmış / Yapılmamış Mantığına Göre Net Konut Alanı Hesabı
+    if terk_yapilmis:
+        net_konut_alani = tapu_alani
+        park_terk_alani = 0.0
+    else:
+        # Terk dışı alan terk oranı ne olursa olsun tam kullanılabilir arsadır
+        net_konut_alani = max(0.0, tapu_alani - park_terk_alani)
+
+    net_konut_orani = (net_konut_alani / tapu_alani * 100) if tapu_alani > 0 else 0.0
+    st.caption(f"📐 Kullanılabilir Net Arsa: **{net_konut_alani:,.2f} m²** (%{net_konut_orani:.2f})")
+
+    st.session_state.tapu_alani = tapu_alani
+    st.session_state.net_konut_alani = net_konut_alani
+    st.session_state.net_konut_orani = net_konut_orani
+    st.session_state.park_terk_alani = park_terk_alani
+
+    nitelik = st.selectbox("Nitelik", ["Arsa", "Bahçe", "Tarla"])
 
     col_k, col_t = st.columns(2)
     with col_k:
@@ -836,7 +870,7 @@ with st.sidebar:
         "💾 Mevcut Verileri Hafızaya Kaydet", use_container_width=True
     ):
         db_kayit_ekle_veya_guncelle(
-            mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, kaks, taks, imar_fonksiyonu
+            mahalle, ada, parsel, tapu_alani, net_konut_alani, net_konut_orani, park_terk_alani, terk_yapilmis, kaks, taks, imar_fonksiyonu
         )
         st.toast("Veriler başarıyla hafızaya kaydedildi!", icon="✅")
 
@@ -876,6 +910,7 @@ with st.sidebar:
                         st.session_state.net_konut_alani = birlestirilmis["net_konut_alani"]
                         st.session_state.net_konut_orani = birlestirilmis["net_konut_orani"]
                         st.session_state.park_terk_alani = birlestirilmis["park_terk_alani"]
+                        st.session_state.terk_yapilmis = bool(birlestirilmis["terk_yapilmis"])
                         st.session_state.kaks = birlestirilmis["kaks"]
                         st.session_state.taks = birlestirilmis["taks"]
                         st.session_state.ada = birlestirilmis["ada"]
@@ -968,19 +1003,9 @@ with st.sidebar:
         "Ortalama Ünite Brüt m²", value=200, step=10
     )
 
-# İMAR HESAPLARI (Net Konut Alanı Odaklı Hesaplama)
-if net_konut_alani > 0:
-    net_alan = net_konut_alani
-    kesinti_orani = 1.0 - (net_konut_alani / tapu_alani) if tapu_alani > 0 else 0.0
-    terk_str = f"Plan Terkleri Sonrası Net (%{net_konut_orani:.1f} Konut)"
-elif terk_durumu or nitelik.lower() == "arsa":
-    net_alan = tapu_alani
-    kesinti_orani = 0.0
-    terk_str = "18. Madde Terki Yapılmış"
-else:
-    net_alan = tapu_alani * 0.70
-    kesinti_orani = 0.30
-    terk_str = "18. Madde Terksiz (%30 DOP Standardı)"
+# İMAR HESAPLARI (Net Kullanılabilir Arsa Odaklı İnşaat Hesabı)
+net_alan = net_konut_alani
+terk_str = "Terk Yapılmış (Net)" if terk_yapilmis else f"Terk Yapılmamış (Terk Sonrası Net: %{net_konut_orani:.1f})"
 
 net_emsal_alani = net_alan * kaks
 ilave_emsal_harici = net_emsal_alani * 0.30
@@ -1024,7 +1049,7 @@ else:
 # TEVHİD BİLGİLENDİRME BANTI
 if st.session_state.get("tevhid_aktif"):
     st.info(
-        f"🔗 **TEVHİD (ÇOKLU PARSEL) MODU AKTİF** | Ada: `{st.session_state.ada}` | Parsel: `{st.session_state.parsel}` | Toplam Brüt Tapu: `{tapu_alani:,.2f} m²` | Net Konut: `{net_konut_alani:,.2f} m²`"
+        f"🔗 **TEVHİD (ÇOKLU PARSEL) MODU AKTİF** | Ada: `{st.session_state.ada}` | Parsel: `{st.session_state.parsel}` | Toplam Brüt Tapu: `{tapu_alani:,.2f} m²` | Net Kullanılabilir Arsa: `{net_konut_alani:,.2f} m²`"
     )
     with st.expander("🔍 Birleştirilen Parsellerin Detay Listesini Göster"):
         if st.session_state.tevhid_df is not None:
@@ -1044,9 +1069,9 @@ with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Brüt Tapu Alanı", f"{tapu_alani:,.2f} m²")
     c2.metric(
-        "Net Konut Alanı",
+        "Kullanılabilir Net Arsa",
         f"{net_konut_alani:,.2f} m²",
-        delta=f"%{net_konut_orani:.1f} İmar Oranı",
+        delta=terk_str,
     )
     c3.metric("Net Emsal Alanı", f"{net_emsal_alani:,.2f} m²")
     c4.metric(
@@ -1067,8 +1092,9 @@ with tab1:
                 "Mahalle",
                 "İmar Fonksiyonu",
                 "Yapı Tipolojisi",
+                "Terk Statüsü",
                 "Havuz Durumu",
-                "Terk / Park Alanı",
+                "Park / Kamu Terk Alanı",
                 "Uygulanan KAKS (Emsal)",
                 "TAKS (Taban Alanı Katsayısı)",
                 "Max Taban Oturumu Alanı",
@@ -1078,6 +1104,7 @@ with tab1:
                 mahalle,
                 imar_fonksiyonu,
                 yapi_tipolojisi,
+                "Terk Yapılmış (Doğrudan Net)" if terk_yapilmis else "Terk Yapılmamış (Terk Dışı Net Kullanılabilir)",
                 f"{havuz_tercihi} ({toplam_havuz_alani:,.1f} m²)",
                 f"{park_terk_alani:,.2f} m²",
                 f"{kaks:.2f}",
@@ -1131,8 +1158,9 @@ with tab4:
             """
             SELECT id, mahalle AS Mahalle, ada AS Ada, parsel AS Parsel, 
                    imar_fonksiyonu AS 'İmar Fonksiyonu', tapu_alani AS 'Brüt Tapu (m²)', 
-                   net_konut_alani AS 'Net Konut (m²)', net_konut_orani AS 'Net Oran (%)', 
-                   park_terk_alani AS 'Park/Terk (m²)', kaks AS KAKS, taks AS TAKS 
+                   net_konut_alani AS 'Net Arsa (m²)', park_terk_alani AS 'Park/Terk (m²)',
+                   CASE WHEN terk_yapilmis = 1 THEN 'Yapılmış' ELSE 'Yapılmamış' END AS 'Terk Statüsü',
+                   kaks AS KAKS, taks AS TAKS 
             FROM imar_kayitlari
             """,
             conn,
@@ -1170,7 +1198,7 @@ with tab4:
         st.error(f"Veritabanı listeleme hatası: {e}")
 
 
-# PDF Oluşturma (GÜNCELLENMİŞ BRÜT VE NET ALAN DESTEKLİ)
+# PDF Oluşturma (BRÜT / NET TERK DESTEKLİ)
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1292,7 +1320,7 @@ def yatay_kurumsal_pdf_olustur():
         Paragraph(tr_fix("ADA"), th_style),
         Paragraph(tr_fix("PARSEL"), th_style),
         Paragraph(tr_fix("BRÜT ALAN (M²)"), th_style),
-        Paragraph(tr_fix("NET KONUT (M²)"), th_style),
+        Paragraph(tr_fix("NET ARSA (M²)"), th_style),
         Paragraph(tr_fix("PARK/TERK (M²)"), th_style),
         Paragraph(tr_fix("FONKSİYON"), th_style),
         Paragraph(tr_fix("KAKS"), th_style),
