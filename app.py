@@ -1,172 +1,175 @@
-import streamlit as st
+import os
+import re
+import sqlite3
 import pandas as pd
 import pdfplumber
-import re
 
-# 1. Sayfa Yapılandırması
-st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Panel", layout="wide")
+# ==========================================
+# 1. VERİTABANI VE KURULUM AYARLARI
+# ==========================================
+DB_NAME = "imar_portfoyu.db"
 
-# 2. Session State Başlatma
-if "db_parseller" not in st.session_state:
-    st.session_state.db_parseller = pd.DataFrame([
-        {
-            "Mahalle": "Çiftlik",
-            "Ada": "1617",
-            "Parsel": "13",
-            "İmar Fonksiyonu": "KONUT ALANI",
-            "Brüt Tapu (m²)": 2131.58,
-            "Net Arsa (m²)": 1492.106,
-            "Park/Terk (m²)": 0.0,
-            "Terk Statüsü": "Yapılmamış",
-            "KAKS": 0.3,
-            "TAKS": 0.3
-        }
-    ])
+def init_db():
+    """Veritabanı tablosunu oluşturur."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS imar_raporlari (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dosya_adi TEXT,
+            mahalle TEXT,
+            ada_parsel TEXT,
+            tapu_alani REAL,
+            terk_durumu TEXT,
+            kaks REAL,
+            emsal_esas_alan REAL,
+            toplam_insaat_alani REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-if "processed_files" not in st.session_state:
-    st.session_state.processed_files = set()
+# ==========================================
+# 2. İMAR HESAPLAMA MOTORU
+# ==========================================
+def hesapla_toplam_insaat_alani(tapu_alani: float, kaks: float, terk_yapilmis_mi: bool):
+    """
+    Kural Seti:
+    - Terk Yapılmış (Net): Tapu Alanı x KAKS x 1.30
+    - Terk Yapılmamış (Brüt): Tapu Alanı x 0.70 x KAKS x 1.30
+    """
+    if terk_yapilmis_mi:
+        emsal_esas_alan = tapu_alani
+    else:
+        emsal_esas_alan = tapu_alani * 0.70
+        
+    toplam_insaat_alani = emsal_esas_alan * kaks * 1.30
+    return round(emsal_esas_alan, 2), round(toplam_insaat_alani, 2)
 
-# 3. Beykoz Belediyesi Özel Tablo Ayrıştırıcı
-def parse_beykoz_pdf(file):
-    data = {
-        "Mahalle": "-",
-        "Ada": "-",
-        "Parsel": "-",
-        "İmar Fonksiyonu": "KONUT ALANI",
-        "Brüt Tapu (m²)": 0.0,
-        "Net Arsa (m²)": 0.0,
-        "Park/Terk (m²)": 0.0,
-        "Terk Statüsü": "Belirtilmemiş",
-        "KAKS": 0.0,
-        "TAKS": 0.0
+# ==========================================
+# 3. PDF VERİ AYRIŞTIRICI (PARSER)
+# ==========================================
+def parse_imar_pdf(pdf_path):
+    """
+    PDF dosyasından Mahalle, Ada/Parsel, Alan, Terk Durumu ve KAKS verilerini çeker.
+    """
+    metin = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            metin += page.extract_text() or ""
+
+    # 1. Mahalle Tespiti
+    mahalle_match = re.search(r'(Yavuzselim|Baklacı|Görele|Çiftlik|Çengeldere|Fatih)', metin, re.IGNORECASE)
+    mahalle = mahalle_match.group(1) if mahalle_match else "Belirtilmedi"
+
+    # 2. Ada / Parsel Tespiti (Örn: 2421 / 4)
+    ada_parsel_match = re.search(r'(\d+)\s*/\s*(\d+)', metin)
+    ada_parsel = f"{ada_parsel_match.group(1)}/{ada_parsel_match.group(2)}" if ada_parsel_match else "Bulunamadı"
+
+    # 3. Tapu Alanı Tespiti (m² cinsinden)
+    alan_match = re.search(r'([\d\.,]+)\s*m²', metin)
+    if alan_match:
+        raw_alan = alan_match.group(1).replace('.', '').replace(',', '.')
+        tapu_alani = float(raw_alan)
+    else:
+        tapu_alani = 0.0
+
+    # 4. KAKS Tespiti
+    kaks_match = re.search(r'(?:KAKS|Emsal)\s*[:=]?\s*(0\.\d+|1\.\d+|\d+)', metin, re.IGNORECASE)
+    kaks = float(kaks_match.group(1)) if kaks_match else 0.40  # Varsayılan KAKS
+
+    # 5. Terk Yapılmış mı Tespiti (DOP / Terkli / Net vb. ifadelere göre)
+    terk_yapilmis_mi = False
+    if re.search(r'(terk\s+yapılmış|net\s+arsa|dop\s+kesilmiş|terkli)', metin, re.IGNORECASE):
+        terk_yapilmis_mi = True
+
+    return {
+        "dosya_adi": os.path.basename(pdf_path),
+        "mahalle": mahalle,
+        "ada_parsel": ada_parsel,
+        "tapu_alani": tapu_alani,
+        "kaks": kaks,
+        "terk_yapilmis_mi": terk_yapilmis_mi
     }
+
+# ==========================================
+# 4. OTOMASYON VE RAPORLAMA AKIŞI
+# ==========================================
+def klasoru_isle_ve_raporla(pdf_klasor_yolu, cikis_excel_yolu="Imar_Hesaplama_Raporu.xlsx"):
+    """
+    Belirtilen klasördeki tüm PDF'leri okur, hesaplar, DB'ye kaydeder ve Excel'e aktarır.
+    """
+    init_db()
+    kayitlar = []
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    for dosya in os.listdir(pdf_klasor_yolu):
+        if dosya.lower().endswith(".pdf"):
+            pdf_yolu = os.path.join(pdf_klasor_yolu, dosya)
+            
+            # PDF Okuma
+            veri = parse_imar_pdf(pdf_yolu)
+            
+            # Hesaplama
+            emsal_esas_alan, toplam_insaat = hesapla_toplam_insaat_alani(
+                veri["tapu_alani"], 
+                veri["kaks"], 
+                veri["terk_yapilmis_mi"]
+            )
+            
+            terk_durumu_str = "Terk Yapılmış (Net)" if veri["terk_yapilmis_mi"] else "Terk Yapılmamış (Brüt)"
+
+            # DB'ye Ekleme
+            cursor.execute('''
+                INSERT INTO imar_raporlari 
+                (dosya_adi, mahalle, ada_parsel, tapu_alani, terk_durumu, kaks, emsal_esas_alan, toplam_insaat_alani)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                veri["dosya_adi"], veri["mahalle"], veri["ada_parsel"], 
+                veri["tapu_alani"], terk_durumu_str, veri["kaks"], 
+                emsal_esas_alan, toplam_insaat
+            ))
+
+            # Rapor Listesine Ekleme
+            kayitlar.append({
+                "Dosya Adı": veri["dosya_adi"],
+                "Mahalle": veri["mahalle"],
+                "Ada/Parsel": veri["ada_parsel"],
+                "Tapu Alanı (m²)": veri["tapu_alani"],
+                "Terk Statüsü": terk_durumu_str,
+                "KAKS": veri["kaks"],
+                "Emsale Esas Alan (m²)": emsal_esas_alan,
+                "Formül": f"{veri['tapu_alani']} x {'1.0' if veri['terk_yapilmis_mi'] else '0.70'} x {veri['kaks']} x 1.30",
+                "Toplam İnşaat Alanı (m²)": toplam_insaat
+            })
+
+    conn.commit()
+    conn.close()
+
+    # Excel Oluşturma
+    df = pd.DataFrame(kayitlar)
+    df.to_excel(cikis_excel_yolu, index=False)
+    print(f"\n[BAŞARILI] {len(kayitlar)} adet rapor işlendi.")
+    print(f"[ÇIKTI] Excel dosyası oluşturuldu: {cikis_excel_yolu}")
+    print(f"[ÇIKTI] Veriler kaydedildi: {DB_NAME}")
+    return df
+
+# ==========================================
+# 5. ÇALIŞTIRMA VE TEST
+# ==========================================
+if __name__ == "__main__":
+    # Manuel Test Örneği:
+    print("--- Manuel Test Sonuçları ---")
     
-    with pdfplumber.open(file) as pdf:
-        # Sayfa 1: Mahalle, Ada, Parsel, Alan okuma
-        page1 = pdf.pages[0]
-        tables = page1.extract_tables()
-        
-        for table in tables:
-            for i, row in enumerate(table):
-                row_str = " ".join([str(cell) for cell in row if cell])
-                
-                # Mahalle / Ada / Parsel / Alan Hücre Tespiti
-                if "Mahalle" in row_str and i + 1 < len(table):
-                    next_row = table[i + 1]
-                    if len(next_row) >= 4:
-                        data["Mahalle"] = str(next_row[0]).strip().title() if next_row[0] else "-"
-                        data["Ada"] = str(next_row[2]).strip() if next_row[2] else "-"
-                        data["Parsel"] = str(next_row[3]).strip() if len(next_row) > 3 and next_row[3] else "-"
-                        
-                        # Alan Temizleme
-                        if len(next_row) > 4 and next_row[4]:
-                            alan_raw = str(next_row[4]).replace("m²", "").replace(",", "").strip()
-                            try:
-                                data["Brüt Tapu (m²)"] = float(alan_raw)
-                            except ValueError:
-                                pass
-
-        # Tüm Metin Üzerinden KAKS / TAKS ve Yedek RegEx Kontrolü
-        full_text = ""
-        for p in pdf.pages:
-            full_text += (p.extract_text() or "") + "\n"
-
-        # Fallback RegEx (Tablo boş dönerse)
-        if data["Mahalle"] in ["-", "Pafta"]:
-            m_match = re.search(r"(BAKLACI|YAVUZSELİM|ÇİFTLİK|GÖRELE|ÇENGELDERE|FATİH)", full_text, re.IGNORECASE)
-            if m_match:
-                data["Mahalle"] = m_match.group(1).capitalize()
-
-        if data["Ada"] == "-":
-            ada_match = re.search(r"Ada\s*[\n\s]*(\d+)", full_text)
-            if ada_match:
-                data["Ada"] = ada_match.group(1)
-
-        if data["Parsel"] == "-":
-            parsel_match = re.search(r"Parsel\s*[\n\s]*(\d+)", full_text)
-            if parsel_match:
-                data["Parsel"] = parsel_match.group(1)
-
-        if data["Brüt Tapu (m²)"] == 0.0:
-            alan_match = re.search(r"(\d{1,3}(?:\,\d{3})*\.\d{2})\s*m²", full_text)
-            if alan_match:
-                try:
-                    data["Brüt Tapu (m²)"] = float(alan_match.group(1).replace(",", ""))
-                except ValueError:
-                    pass
-
-        # KAKS / TAKS Okuma
-        kaks_match = re.search(r"(?:Kaks|Emsal)\s*[\:\n\s]*([0-9\.]+)", full_text, re.IGNORECASE)
-        if kaks_match:
-            try:
-                data["KAKS"] = float(kaks_match.group(1))
-            except ValueError:
-                pass
-
-        taks_match = re.search(r"Taks\s*[\:\n\s]*([0-9\.]+)", full_text, re.IGNORECASE)
-        if taks_match:
-            try:
-                data["TAKS"] = float(taks_match.group(1))
-            except ValueError:
-                pass
-
-        # Net Arsa Hesabı
-        data["Net Arsa (m²)"] = round(data["Brüt Tapu (m²)"] * 0.7, 2)
-
-    return data
-
-# 4. Sol Panel UI
-with st.sidebar:
-    st.header("📜 1. Belge Analizi & Akıllı Hafıza")
+    # 1. Yavuzselim 2421/4 (Terki Yapılmış Net Parsel)
+    _, test1_sonuc = hesapla_toplam_insaat_alani(tapu_alani=7346.76, kaks=0.45, terk_yapilmis_mi=True)
+    print(f"Yavuzselim 2421/4 (Net): {test1_sonuc} m²") # Beklenen: 4,297.85 m²
     
-    uploaded_files = st.file_uploader(
-        "İmar Durumu PDF Raporlarını Yükleyin (Çoklu Seçim)",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key="pdf_uploader"
-    )
+    # 2. Baklacı 1324/9 (Terki Yapılmamış Brüt Parsel)
+    _, test2_sonuc = hesapla_toplam_insaat_alani(tapu_alani=22709.72, kaks=0.40, terk_yapilmis_mi=False)
+    print(f"Baklacı 1324/9 (Brüt): {test2_sonuc} m²")   # Beklenen: 8,266.34 m²
 
-    if uploaded_files:
-        has_new = False
-        for file in uploaded_files:
-            if file.name not in st.session_state.processed_files:
-                parsed_data = parse_beykoz_pdf(file)
-                new_row = pd.DataFrame([parsed_data])
-                st.session_state.db_parseller = pd.concat([st.session_state.db_parseller, new_row], ignore_index=True)
-                st.session_state.processed_files.add(file.name)
-                has_new = True
-        
-        if has_new:
-            st.success("Tüm veriler eksiksiz çıkarıldı!")
-            st.rerun()
-
-    st.divider()
-    st.header("📍 2. Bölge & Parsel Seçimi")
-    
-    col_a, col_p = st.columns(2)
-    with col_a:
-        st.text_input("Ada No", value="1617")
-    with col_p:
-        st.text_input("Parsel No", value="13")
-        
-    st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True)
-
-# 5. Ana Ekran
-st.markdown("<h1 style='text-align: center;'>İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align: center;'>& MERİÇ İNŞAAT EMLAK</h3>", unsafe_allow_html=True)
-st.caption("<p style='text-align: center;'>Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli</p>", unsafe_allow_html=True)
-
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🏗️ İmar & Kapasite Analizi", 
-    "📐 Mimari Potansiyel & Havuz Detayı", 
-    "💰 Finansal Fizibilite ($ USD)", 
-    "🗄️ Sistem Hafızası"
-])
-
-with tab4:
-    st.subheader("🗄️ Veri Tabanında Kayıtlı Tüm Parseller")
-    st.dataframe(
-        st.session_state.db_parseller,
-        use_container_width=True,
-        hide_index=True
-    )
+    # PDF Klasör Otomasyonunu Çalıştırmak İçin (Yolu kendi klasörünüze göre güncelleyin):
+    # klasoru_isle_ve_raporla(pdf_klasor_yolu="./imar_pdf_klasoru")
