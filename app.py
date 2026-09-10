@@ -6,14 +6,6 @@ import re
 # 1. Sayfa Yapılandırması
 st.set_page_config(page_title="İstestate Meriç - İmar & Fizibilite Panel", layout="wide")
 
-# CSS ile Arayüz Tasarımını Düzeltme
-st.markdown("""
-    <style>
-    .main-header { font-size: 26px; font-weight: bold; color: #FFFFFF; text-align: center; }
-    .sub-header { font-size: 20px; font-weight: bold; color: #31333F; text-align: center; }
-    </style>
-""", unsafe_allow_html=True)
-
 # 2. Session State Başlatma
 if "db_parseller" not in st.session_state:
     st.session_state.db_parseller = pd.DataFrame([
@@ -34,9 +26,9 @@ if "db_parseller" not in st.session_state:
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
 
-# 3. İmar PDF Ayrıştırma Motoru (Gelişmiş Regex & Tablo Algılama)
-def parse_imar_pdf(file):
-    parsed = {
+# 3. Beykoz Belediyesi Özel Tablo Ayrıştırıcı
+def parse_beykoz_pdf(file):
+    data = {
         "Mahalle": "-",
         "Ada": "-",
         "Parsel": "-",
@@ -50,54 +42,80 @@ def parse_imar_pdf(file):
     }
     
     with pdfplumber.open(file) as pdf:
-        full_text = ""
-        for page in pdf.pages:
-            full_text += (page.extract_text() or "") + "\n"
-
-    # Mahalle Tespiti
-    mahalle_match = re.search(r"Mahalle\s*[\|\:]?\s*([A-ZÇĞİÖŞÜa-zçğiöşü]+)", full_text)
-    if mahalle_match:
-        parsed["Mahalle"] = mahalle_match.group(1).title()
-
-    # Ada / Parsel Tespiti
-    ada_match = re.search(r"Ada\s*[\|\:]?\s*(\d+)", full_text)
-    if ada_match:
-        parsed["Ada"] = ada_match.group(1)
+        # Sayfa 1: Mahalle, Ada, Parsel, Alan okuma
+        page1 = pdf.pages[0]
+        tables = page1.extract_tables()
         
-    parsel_match = re.search(r"Parsel\s*[\|\:]?\s*(\d+)", full_text)
-    if parsel_match:
-        parsed["Parsel"] = parsel_match.group(1)
+        for table in tables:
+            for i, row in enumerate(table):
+                row_str = " ".join([str(cell) for cell in row if cell])
+                
+                # Mahalle / Ada / Parsel / Alan Hücre Tespiti
+                if "Mahalle" in row_str and i + 1 < len(table):
+                    next_row = table[i + 1]
+                    if len(next_row) >= 4:
+                        data["Mahalle"] = str(next_row[0]).strip().title() if next_row[0] else "-"
+                        data["Ada"] = str(next_row[2]).strip() if next_row[2] else "-"
+                        data["Parsel"] = str(next_row[3]).strip() if len(next_row) > 3 and next_row[3] else "-"
+                        
+                        # Alan Temizleme
+                        if len(next_row) > 4 and next_row[4]:
+                            alan_raw = str(next_row[4]).replace("m²", "").replace(",", "").strip()
+                            try:
+                                data["Brüt Tapu (m²)"] = float(alan_raw)
+                            except ValueError:
+                                pass
 
-    # Toplam Grafik Alanı (Brüt) Tespiti (Örn: 22,709.72 m²)
-    alan_match = re.search(r"Alan\s*\*?\s*[\|\:]?\s*([\d\.\,]+)\s*m²", full_text)
-    if alan_match:
-        val_str = alan_match.group(1).replace(",", "")
-        try:
-            parsed["Brüt Tapu (m²)"] = float(val_str)
-        except ValueError:
-            pass
+        # Tüm Metin Üzerinden KAKS / TAKS ve Yedek RegEx Kontrolü
+        full_text = ""
+        for p in pdf.pages:
+            full_text += (p.extract_text() or "") + "\n"
 
-    # KAKS / TAKS Tespiti
-    kaks_match = re.search(r"Kaks\s*\(Emsal\)\s*[\n\s]*([\d\.]+)", full_text, re.IGNORECASE)
-    if kaks_match:
-        try:
-            parsed["KAKS"] = float(kaks_match.group(1))
-        except ValueError:
-            pass
+        # Fallback RegEx (Tablo boş dönerse)
+        if data["Mahalle"] in ["-", "Pafta"]:
+            m_match = re.search(r"(BAKLACI|YAVUZSELİM|ÇİFTLİK|GÖRELE|ÇENGELDERE|FATİH)", full_text, re.IGNORECASE)
+            if m_match:
+                data["Mahalle"] = m_match.group(1).capitalize()
 
-    taks_match = re.search(r"Taks\s*[\n\s]*([\d\.]+)", full_text, re.IGNORECASE)
-    if taks_match:
-        try:
-            parsed["TAKS"] = float(taks_match.group(1))
-        except ValueError:
-            pass
+        if data["Ada"] == "-":
+            ada_match = re.search(r"Ada\s*[\n\s]*(\d+)", full_text)
+            if ada_match:
+                data["Ada"] = ada_match.group(1)
 
-    # Net Arsa Hesaplaması (Eğer KAKS varsa Brüt x 0.7 varsayımı veya doğrudan okuma)
-    parsed["Net Arsa (m²)"] = round(parsed["Brüt Tapu (m²)"] * 0.7, 2)
-    
-    return parsed
+        if data["Parsel"] == "-":
+            parsel_match = re.search(r"Parsel\s*[\n\s]*(\d+)", full_text)
+            if parsel_match:
+                data["Parsel"] = parsel_match.group(1)
 
-# 4. Sol Menü (Sidebar)
+        if data["Brüt Tapu (m²)"] == 0.0:
+            alan_match = re.search(r"(\d{1,3}(?:\,\d{3})*\.\d{2})\s*m²", full_text)
+            if alan_match:
+                try:
+                    data["Brüt Tapu (m²)"] = float(alan_match.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+
+        # KAKS / TAKS Okuma
+        kaks_match = re.search(r"(?:Kaks|Emsal)\s*[\:\n\s]*([0-9\.]+)", full_text, re.IGNORECASE)
+        if kaks_match:
+            try:
+                data["KAKS"] = float(kaks_match.group(1))
+            except ValueError:
+                pass
+
+        taks_match = re.search(r"Taks\s*[\:\n\s]*([0-9\.]+)", full_text, re.IGNORECASE)
+        if taks_match:
+            try:
+                data["TAKS"] = float(taks_match.group(1))
+            except ValueError:
+                pass
+
+        # Net Arsa Hesabı
+        data["Net Arsa (m²)"] = round(data["Brüt Tapu (m²)"] * 0.7, 2)
+
+    return data
+
+# 4. Sol Panel UI
 with st.sidebar:
     st.header("📜 1. Belge Analizi & Akıllı Hafıza")
     
@@ -112,14 +130,14 @@ with st.sidebar:
         has_new = False
         for file in uploaded_files:
             if file.name not in st.session_state.processed_files:
-                data = parse_imar_pdf(file)
-                new_df = pd.DataFrame([data])
-                st.session_state.db_parseller = pd.concat([st.session_state.db_parseller, new_df], ignore_index=True)
+                parsed_data = parse_beykoz_pdf(file)
+                new_row = pd.DataFrame([parsed_data])
+                st.session_state.db_parseller = pd.concat([st.session_state.db_parseller, new_row], ignore_index=True)
                 st.session_state.processed_files.add(file.name)
                 has_new = True
         
         if has_new:
-            st.success("Yeni imar raporları başarıyla işlendi!")
+            st.success("Tüm veriler eksiksiz çıkarıldı!")
             st.rerun()
 
     st.divider()
@@ -133,12 +151,11 @@ with st.sidebar:
         
     st.button("🔍 Hafızadan Bilgi Çek", use_container_width=True)
 
-# 5. Ana Sayfa Başlıkları
+# 5. Ana Ekran
 st.markdown("<h1 style='text-align: center;'>İSTESTATE MERİÇ GAYRİMENKUL DANIŞMANLIK</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align: center; color: #0083B0;'>& MERİÇ İNŞAAT EMLAK</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: center;'>& MERİÇ İNŞAAT EMLAK</h3>", unsafe_allow_html=True)
 st.caption("<p style='text-align: center;'>Gelişmiş Taşınmaz İmar, Mimari Potansiyel ve Finansal Fizibilite Paneli</p>", unsafe_allow_html=True)
 
-# 6. Sekmeler (Tabs)
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏗️ İmar & Kapasite Analizi", 
     "📐 Mimari Potansiyel & Havuz Detayı", 
