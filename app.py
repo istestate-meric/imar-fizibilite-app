@@ -2,6 +2,7 @@ import io
 import json
 import re
 import sqlite3
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 import google.generativeai as genai
@@ -90,13 +91,92 @@ def clean_mahalle_name(name):
         "Yavuzselim", "Yavuz Selim"
     )
 
-    # Eşleşme hassasiyetini artırma
     for key, value in BOLGE_MAHALLE_HARITASI.items():
         for item in value:
             if item.lower() in cleaned.lower() or cleaned.lower() in item.lower():
                 return item
 
     return cleaned if cleaned else name.strip()
+
+
+# GEMINI LIMIT AŞIMINDA OTOMATİK YEDEK PARSER (LOCAL REGEX)
+def fallback_regex_parser(extracted_text):
+    data = {}
+
+    mahalle_match = re.search(r"Mahalle\s*[\n\r]*\s*([^\n\r\|]+)", extracted_text, re.IGNORECASE)
+    if mahalle_match:
+        data["mahalle"] = mahalle_match.group(1).strip()
+
+    ada_match = re.search(r"Ada\s*[\n\r]*\s*\|\s*(\d+)", extracted_text, re.IGNORECASE) or re.search(r"Ada\s*:\s*(\d+)", extracted_text, re.IGNORECASE)
+    if ada_match:
+        data["ada"] = ada_match.group(1).strip()
+
+    parsel_match = re.search(r"Parsel\s*[\n\r]*\s*\|\s*(\d+)", extracted_text, re.IGNORECASE) or re.search(r"Parsel\s*:\s*(\d+)", extracted_text, re.IGNORECASE)
+    if parsel_match:
+        data["parsel"] = parsel_match.group(1).strip()
+
+    alan_match = re.search(r"Alan\s*\*?\s*[\n\r]*\s*\|\s*([\d\.,]+)", extracted_text, re.IGNORECASE)
+    if alan_match:
+        val = alan_match.group(1).replace(".", "").replace(",", ".")
+        try:
+            data["tapu_alani"] = float(val)
+        except Exception:
+            pass
+
+    kaks_match = re.search(r"Kaks\s*\([^\)]*\)\s*[\n\r]*\s*\|\s*([\d\.,]+)", extracted_text, re.IGNORECASE) or re.search(r"Emsal\s*:\s*([\d\.,]+)", extracted_text, re.IGNORECASE)
+    if kaks_match:
+        val = kaks_match.group(1).replace(",", ".")
+        try:
+            data["kaks"] = float(val)
+        except Exception:
+            pass
+
+    taks_match = re.search(r"Taks\s*[\n\r]*\s*\|\s*([\d\.,]+)", extracted_text, re.IGNORECASE)
+    if taks_match:
+        val = taks_match.group(1).replace(",", ".")
+        try:
+            data["taks"] = float(val)
+        except Exception:
+            pass
+
+    fonks_match = re.search(r"Fonksiyon Adı\s*[\n\r]*\s*\|\s*([^\n\r\|]+)", extracted_text, re.IGNORECASE)
+    if fonks_match:
+        data["imar_fonksiyonu"] = fonks_match.group(1).strip()
+
+    return data
+
+
+def parse_pdf_with_gemini_retry(pdf_text, api_key, max_retries=3):
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-3.6-flash")
+
+    prompt = f"""
+    Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
+    - mahalle (metin, 'Mahalle' etiketli alanlardaki tam mahalle adını al. Örn: ÇİFTLİK)
+    - ada (metin)
+    - parsel (metin)
+    - tapu_alani (sayı, 'Alan' veya 'm²' yazan toplam parsel alanı)
+    - kaks (sayı, Emsal)
+    - taks (sayı)
+    - imar_fonksiyonu (Örn: KONUT ALANI, TİCARET VE KONUT ALANI vb.)
+
+    PDF Metni:
+    {pdf_text[:4000]}
+    """
+
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            clean_json = re.search(r"\{.*\}", response.text, re.DOTALL)
+            if clean_json:
+                return json.loads(clean_json.group())
+        except Exception as e:
+            err_msg = str(e)
+            if "429" in err_msg or "quota" in err_msg.lower():
+                time.sleep(12)  # Rate limit aşımında 12 sn bekle ve tekrar dene
+            else:
+                break
+    return None
 
 
 def init_db():
@@ -357,7 +437,7 @@ try:
 except Exception:
     gemini_api_key = None
 
-# Session State Hazırlığı
+# Session State
 if "bolge" not in st.session_state:
     st.session_state.bolge = "Çavuşbaşı"
 if "mahalle" not in st.session_state:
@@ -415,8 +495,7 @@ st.divider()
 # SOL PANEL
 with st.sidebar:
     st.markdown("### 📄 1. Belge Analizi & Akıllı Hafıza")
-    
-    # ÇOKLU PDF YÜKLEME ALANI
+
     uploaded_pdfs = st.file_uploader(
         "İmar Durumu PDF Raporlarını Yükleyin (Çoklu Seçim)",
         type=["pdf"],
@@ -436,86 +515,73 @@ with st.sidebar:
                                 [page.extract_text() or "" for page in pdf.pages]
                             )
 
+                        data = None
                         if gemini_api_key:
-                            genai.configure(api_key=gemini_api_key)
-                            model = genai.GenerativeModel("gemini-3.6-flash")
-
-                            prompt = f"""
-                            Aşağıdaki imar durumu belgesinden şu bilgileri bul ve SADECE saf JSON formatında döndür:
-                            - mahalle (metin, 'Mahalle' etiketli alanlardaki tam mahalle adını al. Örn: ÇİFTLİK)
-                            - ada (metin)
-                            - parsel (metin)
-                            - tapu_alani (sayı, 'Alan' veya 'm²' yazan toplam parsel alanı)
-                            - kaks (sayı, Emsal)
-                            - taks (sayı)
-                            - imar_fonksiyonu (Örn: KONUT ALANI, TİCARET VE KONUT ALANI vb.)
-
-                            PDF Metni:
-                            {extracted_text[:4000]}
-                            """
-
-                            response = model.generate_content(prompt)
-                            clean_json = re.search(
-                                r"\{.*\}", response.text, re.DOTALL
+                            data = parse_pdf_with_gemini_retry(
+                                extracted_text, gemini_api_key
                             )
 
-                            if clean_json:
-                                data = json.loads(clean_json.group())
+                        # API Kotası veya Bağlantı Hatasında Otomatik Yerel Regex Ayrıştırma
+                        if not data:
+                            data = fallback_regex_parser(extracted_text)
 
-                                gelen_mahalle = clean_mahalle_name(
-                                    data.get("mahalle", st.session_state.mahalle)
-                                )
-                                for b_adi, m_listesi in BOLGE_MAHALLE_HARITASI.items():
-                                    for m in m_listesi:
-                                        if (
-                                            clean_mahalle_name(m).upper()
-                                            == gelen_mahalle.upper()
-                                        ):
-                                            st.session_state.bolge = b_adi
-                                            st.session_state.mahalle = m
-                                            break
+                        if data:
+                            gelen_mahalle = clean_mahalle_name(
+                                data.get("mahalle", st.session_state.mahalle)
+                            )
+                            for b_adi, m_listesi in BOLGE_MAHALLE_HARITASI.items():
+                                for m in m_listesi:
+                                    if (
+                                        clean_mahalle_name(m).upper()
+                                        == gelen_mahalle.upper()
+                                    ):
+                                        st.session_state.bolge = b_adi
+                                        st.session_state.mahalle = m
+                                        break
 
-                                st.session_state.ada = str(
-                                    data.get("ada", st.session_state.ada)
+                            st.session_state.ada = str(
+                                data.get("ada", st.session_state.ada)
+                            )
+                            st.session_state.parsel = str(
+                                data.get("parsel", st.session_state.parsel)
+                            )
+                            st.session_state.tapu_alani = float(
+                                data.get(
+                                    "tapu_alani", st.session_state.tapu_alani
                                 )
-                                st.session_state.parsel = str(
-                                    data.get("parsel", st.session_state.parsel)
-                                )
-                                st.session_state.tapu_alani = float(
-                                    data.get(
-                                        "tapu_alani", st.session_state.tapu_alani
-                                    )
-                                )
-                                st.session_state.kaks = float(
-                                    data.get("kaks", st.session_state.kaks)
-                                )
-                                st.session_state.taks = float(
-                                    data.get("taks", st.session_state.taks)
-                                )
-                                st.session_state.tevhid_aktif = False
+                            )
+                            st.session_state.kaks = float(
+                                data.get("kaks", st.session_state.kaks)
+                            )
+                            st.session_state.taks = float(
+                                data.get("taks", st.session_state.taks)
+                            )
+                            st.session_state.tevhid_aktif = False
 
-                                if data.get("imar_fonksiyonu"):
-                                    st.session_state.imar_fonksiyonu = str(
-                                        data.get("imar_fonksiyonu")
-                                    ).upper()
+                            if data.get("imar_fonksiyonu"):
+                                st.session_state.imar_fonksiyonu = str(
+                                    data.get("imar_fonksiyonu")
+                                ).upper()
 
-                                db_kayit_ekle_veya_guncelle(
-                                    st.session_state.mahalle,
-                                    st.session_state.ada,
-                                    st.session_state.parsel,
-                                    st.session_state.tapu_alani,
-                                    st.session_state.kaks,
-                                    st.session_state.taks,
-                                    st.session_state.imar_fonksiyonu,
-                                )
+                            db_kayit_ekle_veya_guncelle(
+                                st.session_state.mahalle,
+                                st.session_state.ada,
+                                st.session_state.parsel,
+                                st.session_state.tapu_alani,
+                                st.session_state.kaks,
+                                st.session_state.taks,
+                                st.session_state.imar_fonksiyonu,
+                            )
 
-                                st.session_state.processed_files.append(
-                                    uploaded_pdf.name
-                                )
-                                st.toast(
-                                    f"✅ {uploaded_pdf.name} başarıyla işlendi!",
-                                    icon="⚡",
-                                )
+                            st.session_state.processed_files.append(
+                                uploaded_pdf.name
+                            )
+                            st.toast(
+                                f"✅ {uploaded_pdf.name} işlendi!", icon="⚡"
+                            )
+
+                        # API Istek Kotasini Korumak İçin Her Dosyadan Sonra 2 Sn Bekleme
+                        time.sleep(2)
 
                     except Exception as e:
                         st.error(f"{uploaded_pdf.name} İşleme Hatası: {e}")
@@ -673,7 +739,7 @@ with st.sidebar:
         )
         st.toast("Veriler başarıyla hafızaya kaydedildi!", icon="✅")
 
-    # TEVHİD (ÇOKLU PARSEL BİRLEŞTİRME) MODÜLÜ
+    # TEVHİD MODÜLÜ
     st.markdown("---")
     st.markdown("### 🔗 2.1 Tevhid (Çoklu Parsel)")
 
@@ -994,7 +1060,7 @@ with tab4:
         st.error(f"Veritabanı listeleme hatası: {e}")
 
 
-# PDF Oluşturma Fonksiyonu
+# PDF Oluşturma
 def yatay_kurumsal_pdf_olustur():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
