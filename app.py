@@ -1,73 +1,62 @@
-import pdfplumber
-import re
+import streamlit as st
+import pandas as pd
+import io
+from parser import parse_imar_pdf
 
-def clean_float(value_str):
-    """
-    Türkçe sayı formatını (2.131,58 veya 2,131.58) doğru Python float tipine dönüştürür.
-    Binlik ayracı olan noktaları temizler.
-    """
-    if not value_str:
-        return 0.0
-    value_str = value_str.strip()
-    # Eğer hem nokta hem virgül varsa (Örn: 2.131,58)
-    if '.' in value_str and ',' in value_str:
-        value_str = value_str.replace('.', '').replace(',', '.')
-    # Sadece virgül varsa (Örn: 2131,58)
-    elif ',' in value_str:
-        value_str = value_str.replace(',', '.')
+st.set_page_config(page_title="İmar & Portföy Analiz Raporu", layout="wide")
+
+st.title("🏢 İstestate & Meriç Gayrimenkul İmar Analiz Sistemi")
+
+uploaded_files = st.file_uploader("İmar Durumu PDF Dosyalarını Yükleyin", type=["pdf"], accept_multiple_files=True)
+
+if uploaded_files:
+    kayitlar = []
     
-    try:
-        return float(value_str)
-    except ValueError:
-        return 0.0
+    for pdf in uploaded_files:
+        p = parse_imar_pdf(pdf)
+        
+        # HESAPLAMA MANTIĞI (Meriç Raporu Standartları):
+        # Terk Yapılmamışsa Hesaba Alınan Alan = Tapu Alanı x 0.70
+        # Terk Yapılmışsa Hesaba Alınan Alan = Tapu Alanı (doğrudan)
+        if p["terk_yapilmis_mi"]:
+            hesaba_alinan_alan = p["tapu_alani"]
+            terk_statu = "Terk Yapılmış (Net)"
+            formul_str = f"{p['tapu_alani']} x {p['kaks']} x 1.30"
+        else:
+            hesaba_alinan_alan = p["tapu_alani"] * 0.70
+            terk_statu = "Terk Yapılmamış (Brüt)"
+            formul_str = f"{p['tapu_alani']} x 0.70 x {p['kaks']} x 1.30"
 
-def parse_imar_pdf(pdf_file):
-    metin = ""
-    with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            metin += (page.extract_text() or "") + "\n"
+        # Toplam İnşaat Alanı = Hesaba Alınan Alan x KAKS x 1.30
+        toplam_insaat = hesaba_alinan_alan * p["kaks"] * 1.30
 
-    # 1. Mahalle Tespiti
-    mahalle_match = re.search(r'(Yavuzselim|Baklacı|Görele|Çiftlik|Çengeldere|Fatih)', metin, re.IGNORECASE)
-    mahalle = mahalle_match.group(1).upper() if mahalle_match else "ÇİFTLİK"
+        kayitlar.append({
+            "Dosya Adı": p["dosya_adi"],
+            "Mahalle": p["mahalle"],
+            "Ada/Parsel": p["ada_parsel"],
+            "Tapu Alanı (m²)": round(p["tapu_alani"], 2),
+            "Fonksiyon Alanı (m²)": round(p["fonksiyon_alani"], 2),
+            "Terk Statüsü": terk_statu,
+            "KAKS": p["kaks"],
+            "Hesaba Alınan Alan (m²)": round(hesaba_alinan_alan, 2),
+            "Formül": formul_str,
+            "Toplam İnşaat Alanı (m²)": round(toplam_insaat, 2)
+        })
 
-    # 2. Ada / Parsel Tespiti
-    ada_match = re.search(r'Ada\s*\|\s*Alan.*?\n.*?(\d+)\s*\|\s*(\d+)', metin, re.DOTALL)
-    if not ada_match:
-        ada_parsel_match = re.search(r'(\d+)\s*/\s*(\d+)', pdf_file.name)
-        ada = ada_parsel_match.group(1) if ada_parsel_match else "1617"
-        parsel = ada_parsel_match.group(2) if ada_parsel_match else "-"
-    else:
-        ada = ada_match.group(1)
-        parsel = ada_match.group(2)
+    df = pd.DataFrame(kayitlar)
+    
+    # Tabloyu Ekranlama
+    st.subheader("📊 Analiz Sonuçları")
+    st.dataframe(df, use_container_width=True)
 
-    # 3. Grafik / Tapu Alanı Tespiti (Örn: 2,131.58 m² veya 974.59 m²)
-    alan_match = re.search(r'\|\s*([\d\.,]+)\s*m²', metin)
-    tapu_alani = clean_float(alan_match.group(1)) if alan_match else 0.0
-
-    # 4. KAKS (Emsal) Tespiti
-    kaks_match = re.search(r'Kaks\s*\(Emsal\).*?\n.*?([\d\.,]+)', metin, re.IGNORECASE)
-    kaks = clean_float(kaks_match.group(1)) if kaks_match else 0.30
-
-    # 5. Fonksiyon Alanına Giren m² Tespiti
-    fonk_match = re.search(r'Fonksiyon Alanına\s*Giren.*?\n.*?([\d\.,]+)\s*m²', metin, re.DOTALL)
-    fonksiyon_alani = clean_float(fonk_match.group(1)) if fonk_match else 0.0
-
-    # TERK TESPİT MANTIĞI:
-    # Fonksiyon alanı tapu alanının %98'inden fazlasını kaplıyorsa TERK YAPILMIŞTIR (Net Arsa).
-    # Aksi halde henüz terki yapılmamış brüt arsadır.
-    terk_yapilmis_mi = False
-    if tapu_alani > 0 and (fonksiyon_alani / tapu_alani) >= 0.98:
-        terk_yapilmis_mi = True
-
-    return {
-        "dosya_adi": pdf_file.name,
-        "mahalle": mahalle,
-        "ada": ada,
-        "parsel": parsel,
-        "ada_parsel": f"{ada}/{parsel}",
-        "tapu_alani": tapu_alani,
-        "fonksiyon_alani": fonksiyon_alani,
-        "kaks": kaks,
-        "terk_yapilmis_mi": terk_yapilmis_mi
-    }
+    # Excel İndirme
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='İmar Analiz')
+    
+    st.download_button(
+        label="📥 Excel Raporunu İndir",
+        data=output.getvalue(),
+        file_name="Imar_Analiz_Raporu.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
